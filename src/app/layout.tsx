@@ -8,8 +8,24 @@ const geist = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "Memories",
-  description: "A private photo gallery to keep your memories safe.",
+  title: "My memory for you",
+  description: "A private and secure collection of our beautiful memories. My memory for you.",
+  keywords: ["My memory for you", "private photo gallery", "secure gallery", "memories"],
+  openGraph: {
+    title: "My memory for you",
+    description: "A private and secure collection of our beautiful memories.",
+    url: "https://my-memory-for-you.vercel.app",
+    siteName: "My memory for you",
+    images: [
+      {
+        url: "/icon-512.png", // Fallback image for OG
+        width: 512,
+        height: 512,
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
   icons: {
     icon: [
       { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
@@ -20,6 +36,7 @@ export const metadata: Metadata = {
     ],
   },
   manifest: "/manifest.json",
+  metadataBase: new URL("https://my-memory-for-you.vercel.app"),
 };
 
 export const viewport: Viewport = {
