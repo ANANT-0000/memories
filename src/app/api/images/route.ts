@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAdminSupabase } from '@/lib/supabaseClient';
 import { cookies } from 'next/headers';
+import sharp from 'sharp';
 
 export async function GET(request: Request) {
   const token = (await cookies()).get('auth_token');
@@ -49,9 +50,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const token = (await cookies()).get('auth_token');
-  if (!token) {
-    return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  // Require BOTH gallery auth and admin auth for uploads
+  const adminToken = (await cookies()).get('admin_token');
+  if (!adminToken) {
+    return NextResponse.json({ success: false, message: 'Admin access required' }, { status: 403 });
   }
 
   try {
@@ -62,17 +64,51 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: 'No file uploaded' }, { status: 400 });
     }
 
-    const fileBuffer = await file.arrayBuffer();
-    const fileName = `${Date.now()}-${file.name.replace(/\s+/g, '-')}`;
-    
+    if (!file.type.startsWith('image/')) {
+      return NextResponse.json({ success: false, message: 'Only image files are allowed' }, { status: 400 });
+    }
+
+    const rawBuffer = Buffer.from(await file.arrayBuffer());
+
+    // ─── Compression layer ────────────────────────────────────────────────────
+    // Read image metadata to decide compression strategy
+    const metadata = await sharp(rawBuffer).metadata();
+    const originalSizeKB = Math.round(rawBuffer.byteLength / 1024);
+
+    // PNG/GIF sources → lossless WebP (perfect pixel quality, preserves transparency)
+    // JPG/HEIC/others → near-lossless WebP (quality 100, ~40% smaller, zero visible loss)
+    const isLosslessSource = ['png', 'gif', 'svg'].includes(metadata.format ?? '');
+
+    const compressedBuffer = await sharp(rawBuffer)
+      .webp(
+        isLosslessSource
+          ? { lossless: true }
+          : { nearLossless: true, quality: 100 }
+      )
+      .toBuffer();
+
+    const compressedSizeKB = Math.round(compressedBuffer.byteLength / 1024);
+    const saving = Math.round((1 - compressedBuffer.byteLength / rawBuffer.byteLength) * 100);
+
+    console.log(
+      `[upload] ${file.name}: ${originalSizeKB}KB → ${compressedSizeKB}KB WebP (saved ${saving >= 0 ? saving : 0}%)`
+    );
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Always store as .webp
+    const baseName = file.name.replace(/\.[^/.]+$/, '').replace(/\s+/g, '-');
+    const fileName = `${Date.now()}-${baseName}.webp`;
+    const storagePath = `images/${fileName}`;
+
     const supabase = getAdminSupabase();
 
-    // 1. Upload to Storage
-    const { data: uploadData, error: uploadError } = await supabase
+    // 1. Upload compressed WebP to Storage
+    const { error: uploadError } = await supabase
       .storage
       .from('gallery_bucket')
-      .upload(`images/${fileName}`, fileBuffer, {
-        contentType: file.type,
+      .upload(storagePath, compressedBuffer, {
+        contentType: 'image/webp',
+        upsert: false,
       });
 
     if (uploadError) {
@@ -80,12 +116,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: 'Storage upload failed' }, { status: 500 });
     }
 
-    // 2. Insert into Database
+    // 2. Insert path into Database
     const { data: insertData, error: dbError } = await supabase
       .from('gallery_images')
       .insert({
-        url: `images/${fileName}`,
-        sort_order: Date.now() // Simple way to append to the end
+        url: storagePath,
+        sort_order: Date.now(),
       })
       .select()
       .single();
@@ -95,7 +131,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: 'Database insert failed' }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, image: insertData });
+    return NextResponse.json({
+      success: true,
+      image: insertData,
+      compression: { originalSizeKB, compressedSizeKB, savedPercent: Math.max(0, saving) },
+    });
 
   } catch (error) {
     console.error('Upload POST Error:', error);

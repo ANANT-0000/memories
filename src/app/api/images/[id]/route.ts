@@ -3,9 +3,9 @@ import { getAdminSupabase } from '@/lib/supabaseClient';
 import { cookies } from 'next/headers';
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const token = (await cookies()).get('auth_token');
-  if (!token) {
-    return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
+  const adminToken = (await cookies()).get('admin_token');
+  if (!adminToken) {
+    return NextResponse.json({ success: false, message: 'Admin access required' }, { status: 403 });
   }
 
   try {
