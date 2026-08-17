@@ -3,13 +3,9 @@ import { getAdminSupabase } from '@/lib/supabaseClient';
 import { cookies } from 'next/headers';
 import sharp from 'sharp';
 
-export async function GET(request: Request) {
-  const token = (await cookies()).get('auth_token');
-  if (!token) {
-    return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 });
-  }
-
+export async function GET() {
   try {
+
     const supabase = getAdminSupabase();
     const { data: images, error: dbError } = await supabase
       .from('gallery_images')

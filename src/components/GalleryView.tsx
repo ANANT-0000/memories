@@ -2,9 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Settings } from "lucide-react";
-import { useRouter } from "next/navigation";
 import SwipeCarousel from "@/components/SwipeCarousel";
+
 
 type ImageType = {
   id: string;
@@ -16,7 +15,7 @@ export default function GalleryView() {
   const [images, setImages] = useState<ImageType[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const router = useRouter();
+
 
   useEffect(() => {
     fetchImages();
@@ -60,15 +59,8 @@ export default function GalleryView() {
   return (
     <div className="min-h-dvh bg-black">
       {/* Header */}
-      <header className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl border-b border-white/5 px-4 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl border-b border-white/5 px-4 py-3 flex items-center justify-center">
         <h1 className="text-white font-semibold text-lg tracking-tight">Gallery</h1>
-        <button
-          onClick={() => router.push("/admin")}
-          className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition-colors"
-          title="Admin"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
       </header>
 
       {/* Gallery Grid */}
@@ -77,10 +69,10 @@ export default function GalleryView() {
           <div className="flex flex-col items-center justify-center py-32 gap-4">
             <p className="text-white/30 text-sm">No images yet.</p>
             <button
-              onClick={() => router.push("/admin")}
+              onClick={() => window.location.href = "/admin"}
               className="text-white/50 border border-white/10 px-4 py-2 rounded-full text-sm hover:bg-white/5 transition-colors"
             >
-              Upload images in Admin →
+              Upload images via /admin →
             </button>
           </div>
         ) : (
