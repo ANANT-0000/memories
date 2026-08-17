@@ -1,7 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { UploadCloud, Loader2, Trash2, ArrowLeft, Image as ImageIcon, LogOut, CheckCircle, XCircle } from "lucide-react";
+import { useState, useRef, useCallback } from "react";
+import {
+  UploadCloud, Loader2, Trash2, ArrowLeft,
+  Image as ImageIcon, LogOut, CheckCircle,
+  XCircle, Check, X
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -22,251 +26,378 @@ type UploadItem = {
 export default function AdminDashboard({ initialImages }: { initialImages: ImageType[] }) {
   const [images, setImages] = useState<ImageType[]>(initialImages);
   const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
+  // ─── Upload logic ────────────────────────────────────────────────────────────
   const uploadFile = async (file: File, queueId: string) => {
-    setUploadQueue((prev) =>
-      prev.map((u) => (u.id === queueId ? { ...u, status: "uploading" } : u))
-    );
+    setUploadQueue((q) => q.map((u) => u.id === queueId ? { ...u, status: "uploading" } : u));
 
-    const formData = new FormData();
-    formData.append("file", file);
+    const fd = new FormData();
+    fd.append("file", file);
 
     try {
-      const res = await fetch("/api/images", { method: "POST", body: formData });
+      const res = await fetch("/api/images", { method: "POST", body: fd });
       const data = await res.json();
 
       if (data.success) {
-        setUploadQueue((prev) =>
-          prev.map((u) =>
-            u.id === queueId
-              ? { ...u, status: "done", savedPercent: data.compression?.savedPercent }
-              : u
-          )
+        setUploadQueue((q) =>
+          q.map((u) => u.id === queueId ? { ...u, status: "done", savedPercent: data.compression?.savedPercent } : u)
         );
         router.refresh();
       } else {
-        setUploadQueue((prev) =>
-          prev.map((u) =>
-            u.id === queueId ? { ...u, status: "error", error: data.message } : u
-          )
+        setUploadQueue((q) =>
+          q.map((u) => u.id === queueId ? { ...u, status: "error", error: data.message } : u)
         );
       }
     } catch {
-      setUploadQueue((prev) =>
-        prev.map((u) => (u.id === queueId ? { ...u, status: "error", error: "Network error" } : u))
+      setUploadQueue((q) =>
+        q.map((u) => u.id === queueId ? { ...u, status: "error", error: "Network error" } : u)
       );
     }
   };
 
   const processFiles = async (files: File[]) => {
     const imageFiles = files.filter((f) => f.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
+    if (!imageFiles.length) return;
 
-    const newItems: UploadItem[] = imageFiles.map((f) => ({
+    const items: UploadItem[] = imageFiles.map((f) => ({
       id: `${Date.now()}-${Math.random()}`,
       name: f.name,
       status: "pending",
     }));
-
-    setUploadQueue((prev) => [...prev, ...newItems]);
-
-    // Upload all files in parallel
-    await Promise.all(imageFiles.map((f, i) => uploadFile(f, newItems[i].id)));
+    setUploadQueue((q) => [...q, ...items]);
+    await Promise.all(imageFiles.map((f, i) => uploadFile(f, items[i].id)));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    processFiles(files);
-    e.target.value = ""; // reset so same file can be re-selected
+    processFiles(Array.from(e.target.files || []));
+    e.target.value = "";
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const files = Array.from(e.dataTransfer.files);
-    processFiles(files);
+    processFiles(Array.from(e.dataTransfer.files));
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this image?")) return;
-    setDeletingId(id);
-    try {
-      const res = await fetch(`/api/images/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (data.success) {
-        setImages((prev) => prev.filter((img) => img.id !== id));
-      } else {
-        alert(data.message || "Delete failed");
-      }
-    } catch {
-      alert("Delete failed");
-    } finally {
-      setDeletingId(null);
+  // ─── Selection mode ──────────────────────────────────────────────────────────
+  const toggleSelectMode = () => {
+    setSelectMode((s) => !s);
+    setSelected(new Set());
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelected(new Set(images.map((img) => img.id)));
+  };
+
+  // ─── Delete ──────────────────────────────────────────────────────────────────
+  const deleteSelected = async () => {
+    if (selected.size === 0) return;
+    const confirmed = confirm(
+      selected.size === 1
+        ? "Delete this image?"
+        : `Delete ${selected.size} images?`
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+
+    const ids = Array.from(selected);
+    const results = await Promise.allSettled(
+      ids.map((id) => fetch(`/api/images/${id}`, { method: "DELETE" }))
+    );
+
+    const deleted = ids.filter((_, i) => {
+      const r = results[i];
+      return r.status === "fulfilled" && r.value.ok;
+    });
+
+    setImages((prev) => prev.filter((img) => !deleted.includes(img.id)));
+    setSelected(new Set());
+    setSelectMode(false);
+    setDeleting(false);
+
+    if (deleted.length < ids.length) {
+      alert(`${ids.length - deleted.length} image(s) failed to delete.`);
     }
   };
 
-  const handleAdminLogout = async () => {
+  // ─── Admin logout ────────────────────────────────────────────────────────────
+  const handleLogout = async () => {
     await fetch("/api/admin-auth", { method: "DELETE" });
     router.push("/admin/lock");
   };
 
   const activeUploads = uploadQueue.filter((u) => u.status === "uploading" || u.status === "pending");
-  const isUploading = activeUploads.length > 0;
 
   return (
-    <div className="min-h-dvh bg-zinc-950">
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-xl border-b border-white/5 px-4 py-3 flex items-center gap-3">
-        <button
-          onClick={() => router.push("/gallery")}
-          className="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/60 hover:text-white transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-        <h1 className="text-white font-semibold text-lg flex items-center gap-2">
-          Admin
-          <span className="text-xs text-amber-400/60 font-normal border border-amber-400/20 px-2 py-0.5 rounded-full">
-            Protected
-          </span>
-        </h1>
-        <span className="ml-auto text-white/30 text-sm">{images.length} images</span>
-        {/* Admin logout */}
-        <button
-          onClick={handleAdminLogout}
-          title="Lock Admin"
-          className="w-9 h-9 rounded-full bg-amber-500/10 hover:bg-amber-500/20 flex items-center justify-center text-amber-400/60 hover:text-amber-400 transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-        </button>
+    <div className="min-h-dvh bg-zinc-950 pb-32">
+
+      {/* ── Sticky header ─────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-30 bg-zinc-950/95 backdrop-blur-xl border-b border-white/5">
+        <div className="flex items-center gap-2 px-4 py-3">
+          {selectMode ? (
+            <>
+              {/* Cancel selection */}
+              <button
+                onClick={toggleSelectMode}
+                className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-white/60 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <span className="text-white font-medium text-base flex-1">
+                {selected.size === 0 ? "Select images" : `${selected.size} selected`}
+              </span>
+              {/* Select all */}
+              <button
+                onClick={selectAll}
+                className="text-amber-400/80 hover:text-amber-400 text-sm px-3 py-1.5 rounded-lg hover:bg-amber-400/10 transition-colors"
+              >
+                All
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => router.push("/")}
+                className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-white/60 hover:text-white transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <h1 className="text-white font-semibold text-lg flex-1 flex items-center gap-2">
+                Admin
+                <span className="text-xs text-amber-400/60 font-normal border border-amber-400/20 px-2 py-0.5 rounded-full">
+                  Protected
+                </span>
+              </h1>
+              {images.length > 0 && (
+                <button
+                  onClick={toggleSelectMode}
+                  className="text-white/50 hover:text-white text-sm px-3 py-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                >
+                  Select
+                </button>
+              )}
+              <button
+                onClick={handleLogout}
+                title="Lock admin"
+                className="w-9 h-9 rounded-full bg-amber-500/10 hover:bg-amber-500/20 flex items-center justify-center text-amber-400/60 hover:text-amber-400 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </>
+          )}
+        </div>
       </header>
 
       <main className="p-4 max-w-2xl mx-auto">
-        {/* Upload Zone */}
-        <div
-          onClick={() => inputRef.current?.click()}
-          onDrop={handleDrop}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          className={`relative border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all mb-4 ${
-            dragOver
-              ? "border-amber-400/40 bg-amber-400/5"
-              : "border-white/10 hover:border-white/20 hover:bg-white/[0.02]"
-          }`}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            multiple           // ← multi-select enabled
-            className="hidden"
-            onChange={handleFileChange}
-          />
-          <UploadCloud className={`w-10 h-10 mb-3 transition-colors ${dragOver ? "text-amber-400/60" : "text-white/20"}`} />
-          <p className="text-white/50 text-sm font-medium">
-            {dragOver ? "Drop images to upload" : "Tap to select · or drag & drop"}
-          </p>
-          <p className="text-white/20 text-xs mt-1">Select multiple images at once</p>
-        </div>
 
-        {/* Upload Queue */}
+        {/* ── Upload zone (hidden in select mode) ───────────────────────── */}
         <AnimatePresence>
-          {uploadQueue.length > 0 && (
+          {!selectMode && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
-              className="mb-6 space-y-2"
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden mb-6"
             >
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-white/40 text-xs uppercase tracking-widest font-semibold">Upload Queue</p>
-                {!isUploading && (
-                  <button
-                    onClick={() => setUploadQueue([])}
-                    className="text-white/20 hover:text-white/40 text-xs transition-colors"
-                  >
-                    Clear
-                  </button>
-                )}
+              <div
+                onClick={() => inputRef.current?.click()}
+                onDrop={handleDrop}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                  dragOver
+                    ? "border-amber-400/40 bg-amber-400/5"
+                    : "border-white/10 hover:border-white/20 hover:bg-white/[0.02] active:bg-white/5"
+                }`}
+              >
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+                <UploadCloud className={`w-9 h-9 mb-2 transition-colors ${dragOver ? "text-amber-400/60" : "text-white/20"}`} />
+                <p className="text-white/50 text-sm font-medium text-center">
+                  {dragOver ? "Drop to upload" : "Tap to select images"}
+                </p>
+                <p className="text-white/20 text-xs mt-1">Multiple files supported · Auto WebP compression</p>
               </div>
-              {uploadQueue.map((item) => (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 10 }}
-                  className="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3"
-                >
-                  {/* Status icon */}
-                  {item.status === "done" && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
-                  {item.status === "error" && <XCircle className="w-4 h-4 text-red-400 shrink-0" />}
-                  {(item.status === "uploading" || item.status === "pending") && (
-                    <Loader2 className={`w-4 h-4 shrink-0 ${item.status === "uploading" ? "text-amber-400 animate-spin" : "text-white/20"}`} />
-                  )}
 
-                  {/* Filename */}
-                  <span className="text-white/60 text-sm truncate flex-1">{item.name}</span>
-
-                  {/* Savings badge */}
-                  {item.status === "done" && item.savedPercent !== undefined && (
-                    <span className="text-green-400/70 text-xs shrink-0">
-                      -{item.savedPercent}% WebP
-                    </span>
-                  )}
-                  {item.status === "error" && (
-                    <span className="text-red-400/70 text-xs shrink-0">{item.error}</span>
-                  )}
-                </motion.div>
-              ))}
+              {/* Upload queue */}
+              <AnimatePresence>
+                {uploadQueue.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="mt-3 space-y-2"
+                  >
+                    <div className="flex justify-between items-center mb-1">
+                      <p className="text-white/30 text-xs uppercase tracking-widest font-semibold">Uploads</p>
+                      {activeUploads.length === 0 && (
+                        <button onClick={() => setUploadQueue([])} className="text-white/20 text-xs hover:text-white/40 transition-colors">
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    {uploadQueue.map((item) => (
+                      <motion.div
+                        key={item.id}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3"
+                      >
+                        {item.status === "done" && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
+                        {item.status === "error" && <XCircle className="w-4 h-4 text-red-400 shrink-0" />}
+                        {(item.status === "uploading" || item.status === "pending") && (
+                          <Loader2 className={`w-4 h-4 shrink-0 ${item.status === "uploading" ? "text-amber-400 animate-spin" : "text-white/20"}`} />
+                        )}
+                        <span className="text-white/60 text-sm truncate flex-1 min-w-0">{item.name}</span>
+                        {item.status === "done" && item.savedPercent !== undefined && (
+                          <span className="text-green-400/60 text-xs shrink-0">-{item.savedPercent}%</span>
+                        )}
+                        {item.status === "error" && (
+                          <span className="text-red-400/60 text-xs shrink-0 max-w-[100px] text-right">{item.error}</span>
+                        )}
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Images grid */}
-        <h2 className="text-white/40 text-xs font-semibold uppercase tracking-widest mb-4">
-          {images.length === 0 ? "No images yet" : "Manage Images"}
-        </h2>
+        {/* ── Image count label ──────────────────────────────────────────── */}
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-white/30 text-xs font-semibold uppercase tracking-widest">
+            {images.length === 0 ? "No images" : `${images.length} image${images.length === 1 ? "" : "s"}`}
+          </p>
+          {selectMode && selected.size > 0 && (
+            <p className="text-amber-400/60 text-xs">{selected.size} selected</p>
+          )}
+        </div>
 
+        {/* ── Image grid ────────────────────────────────────────────────── */}
         {images.length === 0 ? (
-          <div className="flex flex-col items-center py-16 gap-3">
+          <div className="flex flex-col items-center py-20 gap-3">
             <ImageIcon className="w-12 h-12 text-white/10" />
             <p className="text-white/20 text-sm">Upload your first image above</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
             <AnimatePresence>
-              {images.map((img) => (
-                <motion.div
-                  key={img.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="relative group aspect-square bg-white/5 rounded-xl overflow-hidden"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.url} alt="Gallery item" className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors duration-200 flex items-center justify-center">
-                    <button
-                      onClick={() => handleDelete(img.id)}
-                      disabled={deletingId === img.id}
-                      className="opacity-0 group-hover:opacity-100 bg-red-500/80 hover:bg-red-500 text-white p-3 rounded-full transition-all disabled:opacity-50"
-                    >
-                      {deletingId === img.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
+              {images.map((img) => {
+                const isSelected = selected.has(img.id);
+                return (
+                  <motion.div
+                    key={img.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.92 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.88 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 28 }}
+                    onClick={() => selectMode && toggleSelect(img.id)}
+                    className={`relative aspect-square bg-white/5 rounded-xl overflow-hidden ${
+                      selectMode ? "cursor-pointer" : ""
+                    }`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={img.url}
+                      alt="Gallery item"
+                      className={`w-full h-full object-cover transition-transform duration-200 ${
+                        isSelected ? "scale-95 brightness-50" : ""
+                      }`}
+                    />
+
+                    {/* Selection overlay */}
+                    <AnimatePresence>
+                      {selectMode && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="absolute inset-0 flex items-center justify-center"
+                        >
+                          <motion.div
+                            animate={{
+                              scale: isSelected ? 1 : 0.8,
+                              opacity: isSelected ? 1 : 0.6,
+                            }}
+                            className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-colors ${
+                              isSelected
+                                ? "bg-amber-400 border-amber-400"
+                                : "bg-black/40 border-white/50"
+                            }`}
+                          >
+                            {isSelected && <Check className="w-4 h-4 text-black" strokeWidth={3} />}
+                          </motion.div>
+                        </motion.div>
                       )}
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
+                    </AnimatePresence>
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
           </div>
         )}
       </main>
+
+      {/* ── Bottom action bar (select mode only) ──────────────────────────── */}
+      <AnimatePresence>
+        {selectMode && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 400, damping: 35 }}
+            className="fixed bottom-0 inset-x-0 z-40 bg-zinc-900/95 backdrop-blur-xl border-t border-white/5 p-4 pb-safe"
+          >
+            <div className="max-w-2xl mx-auto flex items-center gap-3">
+              <button
+                onClick={toggleSelectMode}
+                className="flex-1 h-12 rounded-2xl bg-white/5 hover:bg-white/10 text-white/60 font-medium transition-colors active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteSelected}
+                disabled={selected.size === 0 || deleting}
+                className="flex-1 h-12 rounded-2xl bg-red-500/80 hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed text-white font-medium flex items-center justify-center gap-2 transition-colors active:scale-95"
+              >
+                {deleting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                {deleting
+                  ? "Deleting…"
+                  : selected.size === 0
+                  ? "Select images"
+                  : `Delete ${selected.size}`}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
