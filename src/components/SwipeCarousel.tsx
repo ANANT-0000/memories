@@ -25,27 +25,30 @@ interface SwipeCarouselProps {
   onPrev: () => void;
 }
 
-// Spring transition shared for sliding
-const SLIDE_TRANSITION = {
-  type: "spring" as const,
-  stiffness: 280,
-  damping: 32,
-  mass: 0.8,
-};
-
-// Sliding variants — direction: +1 forward (right-to-left), -1 back (left-to-right)
+// Slide variants — only handles entry/exit translation, not drag
+// direction: +1 = going forward (new slide from right), -1 = going back (new slide from left)
 const slideVariants = {
-  enter: (direction: number) => ({
-    x: direction > 0 ? "100%" : "-100%",
-    opacity: 1,
+  enter: (dir: number) => ({
+    x: dir >= 0 ? "100%" : "-100%",
+    opacity: 0,
   }),
   center: {
     x: "0%",
     opacity: 1,
+    transition: {
+      x: { type: "spring" as const, stiffness: 320, damping: 36, mass: 0.9 },
+      opacity: { duration: 0.15 },
+    },
   },
-  exit: (direction: number) => ({
-    x: direction > 0 ? "-100%" : "100%",
-    opacity: 1,
+  exit: (dir: number) => ({
+    x: dir >= 0 ? "-60%" : "60%",
+    opacity: 0,
+    scale: 0.95,
+    transition: {
+      x: { type: "spring" as const, stiffness: 320, damping: 36, mass: 0.9 },
+      opacity: { duration: 0.12 },
+      scale: { duration: 0.15 },
+    },
   }),
 };
 
@@ -57,9 +60,14 @@ export default function SwipeCarousel({
   onPrev,
 }: SwipeCarouselProps) {
   const [direction, setDirection] = useState(0);
+  // dragX is ONLY for live drag feedback — never used during slide animation
   const dragX = useMotionValue(0);
-  const bgOpacity = useTransform(dragX, [-200, 0, 200], [0.6, 1, 0.6]);
+  const dragY = useMotionValue(0);
+  const bgOpacity = useTransform(dragX, [-200, 0, 200], [0.55, 1, 0.55]);
+  const bgOpacityY = useTransform(dragY, [0, 200], [1, 0.4]);
+  // Combine both axes for background opacity
   const isDragging = useRef(false);
+  const isAnimating = useRef(false);
 
   const total = images.length;
   const current = images[currentIndex];
@@ -67,13 +75,20 @@ export default function SwipeCarousel({
   const prevImg = images[(currentIndex - 1 + total) % total];
 
   const goNext = useCallback(() => {
+    if (isAnimating.current) return;
+    isAnimating.current = true;
     setDirection(1);
     onNext();
+    // Allow next navigation after spring settles (~400ms)
+    setTimeout(() => { isAnimating.current = false; }, 400);
   }, [onNext]);
 
   const goPrev = useCallback(() => {
+    if (isAnimating.current) return;
+    isAnimating.current = true;
     setDirection(-1);
     onPrev();
+    setTimeout(() => { isAnimating.current = false; }, 400);
   }, [onPrev]);
 
   // Keyboard navigation
@@ -99,31 +114,37 @@ export default function SwipeCarousel({
       isDragging.current = false;
       const { offset, velocity } = info;
 
+      // Reset drag values smoothly first
+      const resetDrag = () => {
+        animate(dragX, 0, { type: "spring", stiffness: 500, damping: 40 });
+        animate(dragY, 0, { type: "spring", stiffness: 500, damping: 40 });
+      };
+
       // Swipe down → close
-      if (offset.y > 120 || velocity.y > 600) {
-        animate(dragX, 0, { duration: 0.1 });
+      if (offset.y > 100 || velocity.y > 500) {
+        resetDrag();
         onClose();
         return;
       }
 
       // Swipe left → next
-      if (offset.x < -60 || velocity.x < -400) {
-        animate(dragX, 0, { duration: 0.1 });
+      if (offset.x < -55 || velocity.x < -350) {
+        resetDrag();
         goNext();
         return;
       }
 
       // Swipe right → prev
-      if (offset.x > 60 || velocity.x > 400) {
-        animate(dragX, 0, { duration: 0.1 });
+      if (offset.x > 55 || velocity.x > 350) {
+        resetDrag();
         goPrev();
         return;
       }
 
       // Snap back
-      animate(dragX, 0, { type: "spring", stiffness: 400, damping: 40 });
+      resetDrag();
     },
-    [goNext, goPrev, onClose, dragX]
+    [goNext, goPrev, onClose, dragX, dragY]
   );
 
   if (!current) return null;
@@ -135,7 +156,7 @@ export default function SwipeCarousel({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: 0.2 }}
     >
       {/* Background */}
       <motion.div
@@ -144,12 +165,13 @@ export default function SwipeCarousel({
         onClick={onClose}
       />
 
-      {/* — Preload adjacent images (caching) — */}
-      {/* Rendered off-screen so browser fetches and caches them */}
+      {/* Preload adjacent images */}
       {total > 1 && (
         <>
-          <img src={nextImg.url} alt="" aria-hidden className="sr-only absolute opacity-0 pointer-events-none w-px h-px" fetchPriority="low" />
-          <img src={prevImg.url} alt="" aria-hidden className="sr-only absolute opacity-0 pointer-events-none w-px h-px" fetchPriority="low" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={nextImg.url} alt="" aria-hidden className="absolute opacity-0 pointer-events-none w-px h-px" fetchPriority="low" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={prevImg.url} alt="" aria-hidden className="absolute opacity-0 pointer-events-none w-px h-px" fetchPriority="low" />
         </>
       )}
 
@@ -167,7 +189,7 @@ export default function SwipeCarousel({
         {currentIndex + 1} / {total}
       </div>
 
-      {/* Swipe hint (mobile, fades after 2s) */}
+      {/* Swipe hint */}
       <motion.p
         className="absolute bottom-8 left-1/2 -translate-x-1/2 z-50 text-white/25 text-xs md:hidden select-none pointer-events-none"
         initial={{ opacity: 1 }}
@@ -197,9 +219,20 @@ export default function SwipeCarousel({
         </>
       )}
 
-      {/* Sliding image track */}
-      <div className="relative z-40 w-full h-full flex items-center justify-center overflow-hidden">
-        <AnimatePresence initial={false} custom={direction} mode="sync">
+      {/* ── Sliding image track ──────────────────────────────────────────── */}
+      {/* Key insight: dragX/dragY are applied to a WRAPPER, not the AnimatePresence child.
+          This completely separates drag feedback from slide animation, eliminating jitter. */}
+      <motion.div
+        className="relative z-40 w-full h-full flex items-center justify-center overflow-hidden"
+        style={{ x: dragX, y: dragY }}
+        drag
+        dragConstraints={{ top: 0, bottom: 0, left: 0, right: 0 }}
+        dragElastic={{ top: 0.1, bottom: 0.35, left: 0.12, right: 0.12 }}
+        onDragStart={() => { isDragging.current = true; }}
+        onDragEnd={handleDragEnd}
+        whileDrag={{ cursor: "grabbing" }}
+      >
+        <AnimatePresence initial={false} custom={direction} mode="popLayout">
           <motion.div
             key={current.id}
             custom={direction}
@@ -207,15 +240,7 @@ export default function SwipeCarousel({
             initial="enter"
             animate="center"
             exit="exit"
-            transition={SLIDE_TRANSITION}
             className="absolute inset-0 flex items-center justify-center px-2 sm:px-16"
-            style={{ x: dragX }}
-            drag
-            dragConstraints={{ top: 0, bottom: 0, left: 0, right: 0 }}
-            dragElastic={{ top: 0.15, bottom: 0.4, left: 0.15, right: 0.15 }}
-            onDragStart={() => { isDragging.current = true; }}
-            onDragEnd={handleDragEnd}
-            whileDrag={{ cursor: "grabbing" }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -227,7 +252,7 @@ export default function SwipeCarousel({
             />
           </motion.div>
         </AnimatePresence>
-      </div>
+      </motion.div>
 
       {/* Dot indicators */}
       {total > 1 && total <= 20 && (
@@ -237,7 +262,10 @@ export default function SwipeCarousel({
               key={i}
               animate={{
                 width: i === currentIndex ? 16 : 6,
-                backgroundColor: i === currentIndex ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.25)",
+                backgroundColor:
+                  i === currentIndex
+                    ? "rgba(255,255,255,0.9)"
+                    : "rgba(255,255,255,0.25)",
               }}
               transition={{ type: "spring", stiffness: 400, damping: 30 }}
               className="h-1.5 rounded-full"

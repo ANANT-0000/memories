@@ -49,14 +49,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
         setUploadQueue((q) =>
           q.map((u) => u.id === queueId ? { ...u, status: "done", savedPercent: data.compression?.savedPercent } : u)
         );
-        // Re-fetch the full image list (with fresh signed URLs) after upload
-        const listRes = await fetch("/api/images");
-        const listData = await listRes.json();
-        if (listData.success && listData.images) {
-          setImages(listData.images);
-        } else {
-          router.refresh();
-        }
+        // Image list refresh is handled in processFiles after all uploads complete
       } else {
         setUploadQueue((q) =>
           q.map((u) => u.id === queueId ? { ...u, status: "error", error: data.message } : u)
@@ -69,6 +62,9 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
     }
   };
 
+  // ─── Controlled upload queue (max CONCURRENCY uploads at once) ───────────────
+  const CONCURRENCY = 2;
+
   const processFiles = async (files: File[]) => {
     const imageFiles = files.filter((f) => f.type.startsWith("image/"));
     if (!imageFiles.length) return;
@@ -79,7 +75,31 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
       status: "pending",
     }));
     setUploadQueue((q) => [...q, ...items]);
-    await Promise.all(imageFiles.map((f, i) => uploadFile(f, items[i].id)));
+
+    // Run uploads with at most CONCURRENCY in-flight at once
+    const pairs = imageFiles.map((f, i) => ({ file: f, queueId: items[i].id }));
+    let cursor = 0;
+
+    const runNext = async (): Promise<void> => {
+      if (cursor >= pairs.length) return;
+      const { file, queueId } = pairs[cursor++];
+      await uploadFile(file, queueId);
+      await runNext(); // pick up the next job in this "slot"
+    };
+
+    // Start CONCURRENCY slots concurrently
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, pairs.length) }, runNext)
+    );
+
+    // After all uploads finish, do a single refresh of the image list
+    try {
+      const listRes = await fetch("/api/images");
+      const listData = await listRes.json();
+      if (listData.success && listData.images) {
+        setImages(listData.images);
+      }
+    } catch { /* non-critical */ }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
