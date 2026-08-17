@@ -24,7 +24,7 @@ export default function PinScreen() {
       });
 
       if (res.ok) {
-        router.push("/gallery");
+        router.push("/");
       } else {
         setShake(true);
         setError(true);

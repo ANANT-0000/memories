@@ -16,8 +16,10 @@ const ALLOWED_TYPES = [
 const MAX_FILE_SIZE_MB = 50;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
-// ─── Max output dimension (longest edge) — prevents 12MP uploads staying huge ─
-const MAX_DIMENSION = 2048;
+// ─── Max output dimension (longest edge) ────────────────────────────────────
+// 1600px covers 2× retina on all phones (up to ~800px wide screens).
+// A 4K phone photo resized to 1600px is visually identical on mobile.
+const MAX_DIMENSION = 1600;
 
 // ─── In-process signed-URL cache ─────────────────────────────────────────────
 // Key: storage path   Value: { url, expiresAt (ms epoch) }
@@ -241,7 +243,10 @@ export async function POST(request: Request) {
         .webp(
           isLosslessSource
             ? { lossless: true, effort: 4 }
-            : { quality: 85, effort: 4, smartSubsample: true },
+            // quality 92 = visually lossless on mobile screens (vs 85 which
+            // can show subtle banding on high-contrast edges at 100% zoom).
+            // Size savings come primarily from the resize step above.
+            : { quality: 92, effort: 4, smartSubsample: true },
         )
         .toBuffer();
     } catch (err) {
