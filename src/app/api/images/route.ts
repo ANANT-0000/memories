@@ -4,19 +4,10 @@ import { cookies } from 'next/headers';
 import sharp from 'sharp';
 import type { Metadata as SharpMetadata } from 'sharp';
 
-// ─── Allowed MIME types ───────────────────────────────────────────────────────
-const ALLOWED_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/avif",
-  "image/heic",
-];
+// ─── Max output dimension (longest edge) ────────────────────────────────────
 const MAX_FILE_SIZE_MB = 50;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
-// ─── Max output dimension (longest edge) ────────────────────────────────────
 // 1600px covers 2× retina on all phones (up to ~800px wide screens).
 // A 4K phone photo resized to 1600px is visually identical on mobile.
 const MAX_DIMENSION = 1600;
@@ -165,12 +156,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Validate MIME type
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    // 3. Validate file type (allow any image/ or .heic/.heif extensions)
+    // Browsers often fail to assign image/heic MIME types to .HEIC files.
+    const fileType = file.type.toLowerCase();
+    const fileName = file.name.toLowerCase();
+    const isImage = fileType.startsWith("image/") || fileName.endsWith(".heic") || fileName.endsWith(".heif");
+
+    if (!isImage) {
       return NextResponse.json(
         {
           success: false,
-          message: `Unsupported file type: ${file.type}. Allowed: JPEG, PNG, GIF, WEBP, AVIF.`,
+          message: `Unsupported file type. Please upload images only (JPEG, PNG, WEBP, HEIC).`,
         },
         { status: 415 },
       );

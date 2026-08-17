@@ -102,6 +102,15 @@ export default function GalleryView() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   useEffect(() => {
+    // ── Session guard ──────────────────────────────────────────────────────
+    // sessionStorage is wiped by the browser on tab/window close.
+    // If the flag is missing this is a new session — go straight to /lock.
+    // PinScreen will clear the old cookie on mount before asking for the PIN.
+    if (!sessionStorage.getItem('gallery_session')) {
+      window.location.replace('/lock');
+      return;
+    }
+
     fetch("/api/images")
       .then((r) => r.json())
       .then((data) => {

@@ -9,16 +9,13 @@ export function proxy(request: NextRequest) {
   // ── Gallery protection: / and /gallery require auth_token ─────────────────
   const isGalleryRoute =
     pathname === '/' || pathname.startsWith('/gallery');
-  const isLockPage = pathname === '/lock';
 
   if (isGalleryRoute && !authToken) {
     return NextResponse.redirect(new URL('/lock', request.url));
   }
 
-  // Already authenticated → skip lock page
-  if (isLockPage && authToken) {
-    return NextResponse.redirect(new URL('/', request.url));
-  }
+  // NOTE: /lock has NO redirect-away rule. PinScreen clears the old cookie
+  // on mount, so the user always sees the PIN screen when they land there.
 
   // ── Admin protection: /admin/* requires admin_token ───────────────────────
   if (!adminToken && pathname.startsWith('/admin') && pathname !== '/admin/lock') {

@@ -66,7 +66,11 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
   const CONCURRENCY = 2;
 
   const processFiles = async (files: File[]) => {
-    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    const imageFiles = files.filter((f) => {
+      const type = f.type.toLowerCase();
+      const name = f.name.toLowerCase();
+      return type.startsWith("image/") || name.endsWith(".heic") || name.endsWith(".heif");
+    });
     if (!imageFiles.length) return;
 
     const items: UploadItem[] = imageFiles.map((f) => ({
@@ -280,7 +284,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                 <input
                   ref={inputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif,.HEIC,.HEIF"
                   multiple
                   className="hidden"
                   onChange={handleFileChange}

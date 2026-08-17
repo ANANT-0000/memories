@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Lock, Delete } from "lucide-react";
@@ -11,6 +12,14 @@ export default function PinScreen() {
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
   const router = useRouter();
+
+  // Clear any existing session cookie the moment the lock screen appears.
+  // This fires on every mount — whether from a fresh tab, browser restore,
+  // or a direct navigation to /lock — so the old cookie never persists.
+  useEffect(() => {
+    sessionStorage.removeItem('gallery_session');
+    fetch('/api/auth', { method: 'DELETE' }).catch(() => {});
+  }, []);
 
   const handlePinSubmit = async (currentPin: string) => {
     setError(false);
@@ -24,6 +33,10 @@ export default function PinScreen() {
       });
 
       if (res.ok) {
+        // Mark this tab as authenticated in sessionStorage.
+        // sessionStorage is cleared when the tab/browser closes — this is what
+        // forces re-authentication on every new session even if the cookie survives.
+        sessionStorage.setItem('gallery_session', '1');
         router.push("/");
       } else {
         setShake(true);
