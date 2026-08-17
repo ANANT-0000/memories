@@ -2,57 +2,83 @@ import { NextResponse } from 'next/server';
 import { getAdminSupabase } from '@/lib/supabaseClient';
 import { cookies } from 'next/headers';
 
-export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  // 1. Admin auth check
   const adminToken = (await cookies()).get('admin_token');
   if (!adminToken) {
-    return NextResponse.json({ success: false, message: 'Admin access required' }, { status: 403 });
+    return NextResponse.json(
+      { success: false, message: 'Admin authentication required.' },
+      { status: 403 }
+    );
+  }
+
+  // 2. Validate id param
+  const { id } = await params;
+  if (!id || typeof id !== 'string' || id.trim() === '') {
+    return NextResponse.json(
+      { success: false, message: 'Invalid image ID.' },
+      { status: 400 }
+    );
   }
 
   try {
-    const { id } = await params;
-    
-    // Body should contain the original bucket path/url to delete from storage
-    // But since the frontend has a signed URL, we can't extract the path directly from it safely
-    // Wait, let's fetch the original path from the DB first before deleting.
     const supabase = getAdminSupabase();
-    
+
+    // 3. Fetch the image record first to get the storage path
     const { data: image, error: fetchError } = await supabase
       .from('gallery_images')
-      .select('url')
+      .select('id, url')
       .eq('id', id)
       .single();
 
     if (fetchError || !image) {
-      return NextResponse.json({ success: false, message: 'Image not found in database' }, { status: 404 });
+      console.error('[DELETE /api/images/[id]] Fetch error:', fetchError?.message);
+      return NextResponse.json(
+        { success: false, message: 'Image not found in database.' },
+        { status: 404 }
+      );
     }
 
-    const originalPath = image.url; // This is 'images/filename.jpg'
+    const storagePath = image.url;
 
-    // 1. Delete from Storage
-    const { error: storageError } = await supabase
-      .storage
-      .from('gallery_bucket')
-      .remove([originalPath]);
-
-    if (storageError) {
-      console.error('Storage Delete Error:', storageError);
-      return NextResponse.json({ success: false, message: 'Failed to delete from storage' }, { status: 500 });
-    }
-
-    // 2. Delete from Database
+    // 4. Delete from DB first (source of truth)
     const { error: dbError } = await supabase
       .from('gallery_images')
       .delete()
       .eq('id', id);
 
     if (dbError) {
-      console.error('Database Delete Error:', dbError);
-      return NextResponse.json({ success: false, message: 'Failed to delete from database' }, { status: 500 });
+      console.error('[DELETE /api/images/[id]] DB delete error:', dbError.message);
+      return NextResponse.json(
+        { success: false, message: 'Failed to delete image record from database.' },
+        { status: 500 }
+      );
+    }
+
+    // 5. Delete from Storage (best-effort — don't fail if file is already gone)
+    const { error: storageError } = await supabase
+      .storage
+      .from('gallery_bucket')
+      .remove([storagePath]);
+
+    if (storageError) {
+      // Log but don't fail — DB record is already gone, storage orphan is not critical
+      console.warn(
+        `[DELETE /api/images/[id]] Storage delete warning for "${storagePath}":`,
+        storageError.message
+      );
     }
 
     return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('DELETE Error:', error);
-    return NextResponse.json({ success: false, message: 'Internal server error' }, { status: 500 });
+
+  } catch (err) {
+    console.error('[DELETE /api/images/[id]] Unexpected error:', err);
+    return NextResponse.json(
+      { success: false, message: 'An unexpected error occurred during deletion.' },
+      { status: 500 }
+    );
   }
 }

@@ -7,14 +7,16 @@ import { ShieldCheck, Delete } from "lucide-react";
 
 export default function AdminLockScreen() {
   const [pin, setPin] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
+
   const router = useRouter();
 
   const handlePinSubmit = async (currentPin: string) => {
     setLoading(true);
-    setError(false);
+    setErrorMsg("");
 
     try {
       const res = await fetch("/api/admin-auth", {
@@ -23,22 +25,27 @@ export default function AdminLockScreen() {
         body: JSON.stringify({ pin: currentPin }),
       });
 
-      if (res.ok) {
+      const data = await res.json();
+
+      if (res.ok && data.success) {
         router.push("/admin");
         router.refresh();
       } else {
+        const msg = data.message || "Incorrect PIN — try again";
         setShake(true);
-        setError(true);
+        setErrorMsg(msg);
         setTimeout(() => {
           setPin("");
           setShake(false);
-          setError(false);
         }, 700);
       }
     } catch {
-      setError(true);
+      setErrorMsg("Network error — check your connection");
       setShake(true);
-      setTimeout(() => { setPin(""); setShake(false); setError(false); }, 700);
+      setTimeout(() => {
+        setPin("");
+        setShake(false);
+      }, 700);
     } finally {
       setLoading(false);
     }
@@ -54,7 +61,7 @@ export default function AdminLockScreen() {
   const handleDelete = () => {
     if (loading) return;
     setPin((p) => p.slice(0, -1));
-    setError(false);
+    setErrorMsg("");
   };
 
   return (
@@ -83,9 +90,9 @@ export default function AdminLockScreen() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.15 }}
-        className={`text-sm mb-12 transition-colors ${error ? "text-red-400" : "text-white/30"}`}
+        className={`text-sm mb-12 transition-colors ${errorMsg ? "text-red-400" : "text-white/30"}`}
       >
-        {error ? "Incorrect PIN — try again" : "Enter your 4-digit admin PIN"}
+        {errorMsg || "Enter your 4-digit admin PIN"}
       </motion.p>
 
       {/* PIN dots */}
@@ -99,16 +106,16 @@ export default function AdminLockScreen() {
             key={i}
             animate={{
               scale: pin.length > i ? 1.15 : 1,
-              backgroundColor: error
+              backgroundColor: errorMsg
                 ? "rgb(239 68 68)"
                 : pin.length > i
-                ? "rgb(251 191 36)"  // amber for admin
-                : "transparent",
-              borderColor: error
+                  ? "rgb(251 191 36)"
+                  : "transparent",
+              borderColor: errorMsg
                 ? "rgb(239 68 68)"
                 : pin.length > i
-                ? "rgb(251 191 36)"
-                : "rgba(255,255,255,0.15)",
+                  ? "rgb(251 191 36)"
+                  : "rgba(255,255,255,0.15)",
             }}
             transition={{ type: "spring", stiffness: 400, damping: 20 }}
             className="w-4 h-4 rounded-full border-2"
