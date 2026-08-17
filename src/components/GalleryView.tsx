@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
 import SwipeCarousel from "@/components/SwipeCarousel";
 
 type ImageType = {
@@ -30,6 +31,8 @@ function GalleryTile({
   const [shouldRender, setShouldRender] = useState(isPriority);
   const [loaded, setLoaded] = useState(false);
 
+  const imgRef = useRef<HTMLImageElement>(null);
+
   // Non-priority tiles: start rendering once 200px from viewport
   useEffect(() => {
     if (isPriority) return; // already rendering
@@ -48,6 +51,13 @@ function GalleryTile({
     return () => observer.disconnect();
   }, [isPriority]);
 
+  // Handle cached images that might not fire onLoad
+  useEffect(() => {
+    if (shouldRender && imgRef.current?.complete) {
+      setLoaded(true);
+    }
+  }, [shouldRender]);
+
   return (
     <div
       ref={ref}
@@ -64,8 +74,9 @@ function GalleryTile({
       />
 
       {shouldRender && (
+        // eslint-disable-next-line @next/next/no-img-element
         <motion.img
-          // eslint-disable-next-line @next/next/no-img-element
+          ref={imgRef}
           src={img.url}
           alt={`Gallery item ${index + 1}`}
           className="w-full h-auto object-cover block"
@@ -97,6 +108,7 @@ function GalleryTile({
 
 // ── Main gallery view ─────────────────────────────────────────────────────────
 export default function GalleryView() {
+  const router = useRouter();
   const [images, setImages] = useState<ImageType[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -154,7 +166,7 @@ export default function GalleryView() {
           <div className="flex flex-col items-center justify-center py-32 gap-4">
             <p className="text-white/30 text-sm">No images yet.</p>
             <button
-              onClick={() => (window.location.href = "/admin")}
+              onClick={() => router.push("/admin")}
               className="text-white/50 border border-white/10 px-4 py-2 rounded-full text-sm hover:bg-white/5 transition-colors"
             >
               Upload images via /admin →

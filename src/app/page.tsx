@@ -7,7 +7,7 @@ export default function Home() {
       <div className="sr-only">
         <h1>My memory for you</h1>
         <p>
-          Welcome to "My memory for you", a secure and private photo gallery.
+          Welcome to &quot;My memory for you&quot;, a secure and private photo gallery.
           This gallery is PIN-protected to ensure memories remain safe and exclusive.
         </p>
       </div>

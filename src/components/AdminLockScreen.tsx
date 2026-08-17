@@ -8,7 +8,7 @@ import { ShieldCheck, Delete } from "lucide-react";
 export default function AdminLockScreen() {
   const [pin, setPin] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
-  const [error, setError] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
 
