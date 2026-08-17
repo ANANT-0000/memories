@@ -31,6 +31,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
   const [deleting, setDeleting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
 
   // ─── Upload logic ────────────────────────────────────────────────────────────
@@ -48,7 +49,14 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
         setUploadQueue((q) =>
           q.map((u) => u.id === queueId ? { ...u, status: "done", savedPercent: data.compression?.savedPercent } : u)
         );
-        router.refresh();
+        // Re-fetch the full image list (with fresh signed URLs) after upload
+        const listRes = await fetch("/api/images");
+        const listData = await listRes.json();
+        if (listData.success && listData.images) {
+          setImages(listData.images);
+        } else {
+          router.refresh();
+        }
       } else {
         setUploadQueue((q) =>
           q.map((u) => u.id === queueId ? { ...u, status: "error", error: data.message } : u)
@@ -86,6 +94,11 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
   };
 
   // ─── Selection mode ──────────────────────────────────────────────────────────
+  const enterSelectMode = useCallback(() => {
+    setSelectMode(true);
+    setSelected(new Set());
+  }, []);
+
   const toggleSelectMode = () => {
     setSelectMode((s) => !s);
     setSelected(new Set());
@@ -101,6 +114,23 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
 
   const selectAll = () => {
     setSelected(new Set(images.map((img) => img.id)));
+  };
+
+  // ─── Long-press to enter select mode (mobile) ────────────────────────────────
+  const handleLongPressStart = (id: string) => {
+    longPressTimer.current = setTimeout(() => {
+      if (!selectMode) {
+        enterSelectMode();
+        setSelected(new Set([id]));
+      }
+    }, 500);
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
   };
 
   // ─── Delete ──────────────────────────────────────────────────────────────────
@@ -159,7 +189,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                 <X className="w-4 h-4" />
               </button>
               <span className="text-white font-medium text-base flex-1">
-                {selected.size === 0 ? "Select images" : `${selected.size} selected`}
+                {selected.size === 0 ? "Tap images to select" : `${selected.size} selected`}
               </span>
               {/* Select all */}
               <button
@@ -185,9 +215,10 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
               </h1>
               {images.length > 0 && (
                 <button
-                  onClick={toggleSelectMode}
-                  className="text-white/50 hover:text-white text-sm px-3 py-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                  onClick={enterSelectMode}
+                  className="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 text-sm px-3 py-1.5 rounded-lg bg-amber-400/10 hover:bg-amber-400/20 transition-colors font-medium"
                 >
+                  <Trash2 className="w-3.5 h-3.5" />
                   Select
                 </button>
               )}
@@ -290,8 +321,10 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
           <p className="text-white/30 text-xs font-semibold uppercase tracking-widest">
             {images.length === 0 ? "No images" : `${images.length} image${images.length === 1 ? "" : "s"}`}
           </p>
-          {selectMode && selected.size > 0 && (
-            <p className="text-amber-400/60 text-xs">{selected.size} selected</p>
+          {selectMode && (
+            <p className="text-white/30 text-xs">
+              {selected.size === 0 ? "Tap to select · Hold to start" : `${selected.size} selected`}
+            </p>
           )}
         </div>
 
@@ -315,16 +348,22 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                     exit={{ opacity: 0, scale: 0.88 }}
                     transition={{ type: "spring", stiffness: 300, damping: 28 }}
                     onClick={() => selectMode && toggleSelect(img.id)}
-                    className={`relative aspect-square bg-white/5 rounded-xl overflow-hidden ${
-                      selectMode ? "cursor-pointer" : ""
+                    onTouchStart={() => handleLongPressStart(img.id)}
+                    onTouchEnd={handleLongPressEnd}
+                    onMouseDown={() => handleLongPressStart(img.id)}
+                    onMouseUp={handleLongPressEnd}
+                    onMouseLeave={handleLongPressEnd}
+                    className={`relative aspect-square bg-white/5 rounded-xl overflow-hidden select-none ${
+                      selectMode ? "cursor-pointer" : "cursor-default"
                     }`}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={img.url}
                       alt="Gallery item"
-                      className={`w-full h-full object-cover transition-transform duration-200 ${
-                        isSelected ? "scale-95 brightness-50" : ""
+                      draggable={false}
+                      className={`w-full h-full object-cover transition-all duration-200 ${
+                        isSelected ? "scale-95 brightness-50" : selectMode ? "brightness-75" : ""
                       }`}
                     />
 
@@ -340,12 +379,12 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                           <motion.div
                             animate={{
                               scale: isSelected ? 1 : 0.8,
-                              opacity: isSelected ? 1 : 0.6,
+                              opacity: isSelected ? 1 : 0.7,
                             }}
-                            className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-colors ${
+                            className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-colors shadow-lg ${
                               isSelected
                                 ? "bg-amber-400 border-amber-400"
-                                : "bg-black/40 border-white/50"
+                                : "bg-black/50 border-white/70 backdrop-blur-sm"
                             }`}
                           >
                             {isSelected && <Check className="w-4 h-4 text-black" strokeWidth={3} />}
@@ -358,6 +397,13 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
               })}
             </AnimatePresence>
           </div>
+        )}
+
+        {/* ── Long press hint (non-select mode, has images) ─────────────── */}
+        {!selectMode && images.length > 0 && (
+          <p className="text-center text-white/15 text-xs mt-6">
+            Hold an image or tap <span className="text-amber-400/40">Select</span> to delete
+          </p>
         )}
       </main>
 
