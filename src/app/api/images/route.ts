@@ -160,13 +160,15 @@ export async function POST(request: Request) {
     // Browsers often fail to assign image/heic MIME types to .HEIC files.
     const fileType = file.type.toLowerCase();
     const fileName = file.name.toLowerCase();
-    const isImage = fileType.startsWith("image/") || fileName.endsWith(".heic") || fileName.endsWith(".heif");
+    const ext = fileName.match(/\.[0-9a-z]+$/)?.[0] || "";
+    const validExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif", ".tiff", ".tif", ".bmp", ".svg"];
+    const isImage = fileType.startsWith("image/") || validExts.includes(ext);
 
     if (!isImage) {
       return NextResponse.json(
         {
           success: false,
-          message: `Unsupported file type. Please upload images only (JPEG, PNG, WEBP, HEIC).`,
+          message: `Unsupported file type. Please upload images only.`,
         },
         { status: 415 },
       );

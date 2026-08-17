@@ -69,7 +69,9 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
     const imageFiles = files.filter((f) => {
       const type = f.type.toLowerCase();
       const name = f.name.toLowerCase();
-      return type.startsWith("image/") || name.endsWith(".heic") || name.endsWith(".heif");
+      const ext = name.match(/\.[0-9a-z]+$/)?.[0] || "";
+      const validExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif", ".tiff", ".tif", ".bmp"];
+      return type.startsWith("image/") || validExts.includes(ext);
     });
     if (!imageFiles.length) return;
 
@@ -284,7 +286,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                 <input
                   ref={inputRef}
                   type="file"
-                  accept="image/*,.heic,.heif,.HEIC,.HEIF"
+                  accept="image/*,.heic,.heif,.HEIC,.HEIF,.tiff,.tif,.bmp,.webp,.avif"
                   multiple
                   className="hidden"
                   onChange={handleFileChange}
