@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import SwipeCarousel from "@/components/SwipeCarousel";
 
@@ -35,7 +35,7 @@ function GalleryTile({
 
   return (
     <div
-      className="mb-2 sm:mb-3 relative group cursor-pointer overflow-hidden rounded-lg sm:rounded-xl"
+      className="mb-2 sm:mb-3 relative group cursor-pointer overflow-hidden rounded-lg sm:rounded-xl active:scale-[0.97] transition-transform duration-150"
       onClick={onClick}
     >
       {/* Skeleton: fixed min-height so layout doesn't shift before image loads */}
@@ -82,9 +82,7 @@ export default function GalleryView({ pin }: { pin: string }) {
   // Layout state
   const [columnsCount, setColumnsCount] = useState(2);
 
-
-
-  // 2. Fetch images
+  // Fetch images on mount
   useEffect(() => {
     fetch("/api/images", {
       headers: { Authorization: `Bearer ${pin}` },
@@ -148,9 +146,6 @@ export default function GalleryView({ pin }: { pin: string }) {
       i === null ? null : (i - 1 + images.length) % images.length
     );
   }, [images.length]);
-
-
-
   if (loading) {
     return (
       <div className="min-h-dvh bg-black flex items-center justify-center">
@@ -175,11 +170,6 @@ export default function GalleryView({ pin }: { pin: string }) {
 
   return (
     <div className="min-h-dvh bg-black">
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-black/80 backdrop-blur-xl border-b border-white/5 px-4 py-3 flex items-center justify-center">
-        <h1 className="text-white font-semibold text-lg tracking-tight">Gallery</h1>
-      </header>
-
       {/* Gallery Grid */}
       <main className="p-2 sm:p-4 pb-20">
         {images.length === 0 ? (
