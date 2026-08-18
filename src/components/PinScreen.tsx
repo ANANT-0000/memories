@@ -1,25 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
-
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Lock, Delete } from "lucide-react";
 
-export default function PinScreen() {
+export default function PinScreen({ onUnlock }: { onUnlock: (pin: string) => void }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
-  const router = useRouter();
 
-  // Clear any existing session cookie the moment the lock screen appears.
-  // This fires on every mount — whether from a fresh tab, browser restore,
-  // or a direct navigation to /lock — so the old cookie never persists.
-  useEffect(() => {
-    sessionStorage.removeItem('gallery_session');
-    fetch('/api/auth', { method: 'DELETE' }).catch(() => {});
-  }, []);
+
 
   const handlePinSubmit = async (currentPin: string) => {
     setError(false);
@@ -33,11 +24,8 @@ export default function PinScreen() {
       });
 
       if (res.ok) {
-        // Mark this tab as authenticated in sessionStorage.
-        // sessionStorage is cleared when the tab/browser closes — this is what
-        // forces re-authentication on every new session even if the cookie survives.
-        sessionStorage.setItem('gallery_session', '1');
-        router.push("/");
+        // Validation succeeded, pass the PIN up to the container
+        onUnlock(currentPin);
       } else {
         setShake(true);
         setError(true);
@@ -118,7 +106,7 @@ export default function PinScreen() {
                 ? "rgb(239 68 68)"
                 : pin.length > i
                 ? "rgb(255 255 255)"
-                : "transparent",
+                : "rgba(0, 0, 0, 0)",
               borderColor: error
                 ? "rgb(239 68 68)"
                 : pin.length > i
@@ -136,7 +124,7 @@ export default function PinScreen() {
         {digits.map((digit) => (
           <motion.button
             key={digit}
-            whileTap={{ scale: 0.88, backgroundColor: "rgba(255,255,255,0.15)" }}
+            whileTap={{ scale: 0.88 }}
             onClick={() => handleDigit(digit.toString())}
             disabled={loading}
             className="h-[72px] rounded-full bg-white/5 border border-white/5 text-white text-2xl font-light transition-colors hover:bg-white/10 active:bg-white/15 disabled:opacity-50"
@@ -148,7 +136,7 @@ export default function PinScreen() {
         {/* Bottom row: empty | 0 | delete */}
         <div />
         <motion.button
-          whileTap={{ scale: 0.88, backgroundColor: "rgba(255,255,255,0.15)" }}
+          whileTap={{ scale: 0.88 }}
           onClick={() => handleDigit("0")}
           disabled={loading}
           className="h-[72px] rounded-full bg-white/5 border border-white/5 text-white text-2xl font-light transition-colors hover:bg-white/10 disabled:opacity-50"

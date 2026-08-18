@@ -37,15 +37,19 @@ function setCachedUrl(path: string, url: string) {
   });
 }
 
-// ─── GET /api/images — protected, auth_token or admin_token required ────────
-export async function GET() {
-  const cookieStore = await cookies();
-  const authToken = cookieStore.get("auth_token");
-  const adminToken = cookieStore.get("admin_token");
+// ─── GET /api/images — protected, PIN required via Bearer token ────────────
+export async function GET(request: Request) {
+  const authHeader = request.headers.get('Authorization');
+  const bearerPin = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const validPin = process.env.GALLERY_PIN || '1234';
 
-  if (!authToken && !adminToken) {
+  // Also accept admin_token cookie (for admin panel access)
+  const cookieStore = await cookies();
+  const adminToken = cookieStore.get('admin_token');
+
+  if (bearerPin !== validPin && !adminToken) {
     return NextResponse.json(
-      { success: false, message: "Authentication required." },
+      { success: false, message: 'Authentication required.' },
       { status: 401 }
     );
   }

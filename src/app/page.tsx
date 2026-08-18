@@ -1,4 +1,4 @@
-import GalleryView from "@/components/GalleryView";
+import GalleryContainer from "@/components/GalleryContainer";
 
 export default function Home() {
   return (
@@ -11,7 +11,7 @@ export default function Home() {
           This gallery is PIN-protected to ensure memories remain safe and exclusive.
         </p>
       </div>
-      <GalleryView />
+      <GalleryContainer />
     </main>
   );
 }

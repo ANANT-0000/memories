@@ -1,11 +1,7 @@
-import PinScreen from "@/components/PinScreen";
+import { redirect } from "next/navigation";
 
-export const metadata = {
-  title: "Unlock Gallery",
-  description: "Enter your PIN to access the gallery.",
-  robots: "noindex", // don't index the lock page
-};
-
+// /lock is no longer needed — the PIN screen lives on the home page via GalleryContainer.
+// Redirect any old bookmarks or links to /.
 export default function LockPage() {
-  return <PinScreen />;
+  redirect("/");
 }

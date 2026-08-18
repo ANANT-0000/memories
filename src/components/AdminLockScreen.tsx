@@ -110,7 +110,7 @@ export default function AdminLockScreen() {
                 ? "rgb(239 68 68)"
                 : pin.length > i
                   ? "rgb(251 191 36)"
-                  : "transparent",
+                  : "rgba(0, 0, 0, 0)",
               borderColor: errorMsg
                 ? "rgb(239 68 68)"
                 : pin.length > i
@@ -128,7 +128,7 @@ export default function AdminLockScreen() {
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
           <motion.button
             key={digit}
-            whileTap={{ scale: 0.88, backgroundColor: "rgba(251,191,36,0.1)" }}
+            whileTap={{ scale: 0.88 }}
             onClick={() => handleDigit(digit.toString())}
             disabled={loading}
             className="h-[72px] rounded-full bg-white/5 border border-white/5 text-white text-2xl font-light transition-colors hover:bg-white/10 disabled:opacity-50"
@@ -138,7 +138,7 @@ export default function AdminLockScreen() {
         ))}
         <div />
         <motion.button
-          whileTap={{ scale: 0.88, backgroundColor: "rgba(251,191,36,0.1)" }}
+          whileTap={{ scale: 0.88 }}
           onClick={() => handleDigit("0")}
           disabled={loading}
           className="h-[72px] rounded-full bg-white/5 border border-white/5 text-white text-2xl font-light transition-colors hover:bg-white/10 disabled:opacity-50"

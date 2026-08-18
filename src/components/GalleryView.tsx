@@ -48,25 +48,18 @@ function GalleryTile({
       />
 
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <motion.img
+      <img
         ref={imgRef}
         src={img.url}
         alt={`Gallery item ${index + 1}`}
-        className="w-full h-auto object-cover block"
+        className={`w-full h-auto object-cover block transition-opacity duration-[400ms] ease-out ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
         loading={isPriority ? "eager" : "lazy"}
         fetchPriority={isPriority ? "high" : "low"}
         decoding={isPriority ? "sync" : "async"}
         sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
         onLoad={() => setLoaded(true)}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: loaded ? 1 : 0 }}
-        transition={{
-          opacity: {
-            duration: isPriority ? 0.25 : 0.4,
-            delay: isPriority ? index * 0.03 : 0,
-            ease: "easeOut",
-          },
-        }}
       />
 
       {/* Hover overlay — desktop only */}
@@ -76,11 +69,10 @@ function GalleryTile({
 }
 
 // ── Main gallery view ─────────────────────────────────────────────────────────
-export default function GalleryView() {
+export default function GalleryView({ pin }: { pin: string }) {
   const router = useRouter();
   const [images, setImages] = useState<ImageType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isSessionValid, setIsSessionValid] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   // Image loading limit
@@ -90,26 +82,18 @@ export default function GalleryView() {
   // Layout state
   const [columnsCount, setColumnsCount] = useState(2);
 
-  // 1. Session check on mount
-  useEffect(() => {
-    if (!sessionStorage.getItem("gallery_session")) {
-      // Clear cookie and redirect so it asks for PIN again
-      fetch("/api/auth", { method: "DELETE" }).catch(() => {});
-      window.location.replace("/lock");
-      return;
-    }
-    
-    setIsSessionValid(true);
-  }, []);
+
 
   // 2. Fetch images
   useEffect(() => {
-    if (!isSessionValid) return;
-
-    fetch("/api/images")
+    fetch("/api/images", {
+      headers: { Authorization: `Bearer ${pin}` },
+    })
       .then((r) => {
         if (r.status === 401) {
-          window.location.replace("/lock");
+          // If the PIN is invalid on the server, we just force a reload
+          // which will clear React state and show the PinScreen again.
+          window.location.reload();
           return;
         }
         return r.json();
@@ -119,7 +103,7 @@ export default function GalleryView() {
       })
       .catch((e) => console.error("Failed to fetch images", e))
       .finally(() => setLoading(false));
-  }, [isSessionValid]);
+  }, [pin]);
 
   // 3. Responsive columns
   useEffect(() => {
@@ -137,7 +121,7 @@ export default function GalleryView() {
 
   // 4. Infinite scroll / lazy loading logic
   useEffect(() => {
-    if (loading || !isSessionValid || images.length === 0) return;
+    if (loading || images.length === 0) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -153,7 +137,7 @@ export default function GalleryView() {
     }
 
     return () => observer.disconnect();
-  }, [loading, isSessionValid, images.length]);
+  }, [loading, images.length]);
 
   const handleNext = useCallback(() => {
     setSelectedIndex((i) => (i === null ? null : (i + 1) % images.length));
@@ -165,10 +149,7 @@ export default function GalleryView() {
     );
   }, [images.length]);
 
-  if (!isSessionValid) {
-    // Return nothing while checking session to prevent flash of content
-    return null;
-  }
+
 
   if (loading) {
     return (
