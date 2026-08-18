@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import NextImage from "next/image";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
 type ImageType = {
@@ -315,14 +316,16 @@ export default function SwipeCarousel({
               className="flex items-center justify-center px-3 sm:px-16"
               style={{ width: `${100 / total}%` }}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <NextImage
                 src={img.url}
                 alt={`Image ${i + 1} of ${total}`}
+                width={1600}
+                height={1200}
                 className="max-w-full max-h-[90dvh] object-contain rounded-xl shadow-2xl select-none pointer-events-none"
                 draggable={false}
-                loading={Math.abs(i - currentIndex) <= 1 ? "eager" : "lazy"}
-                fetchPriority={i === currentIndex ? "high" : "low"}
+                priority={Math.abs(i - currentIndex) <= 1}
+                sizes="100vw"
+                style={{ maxWidth: "100%", maxHeight: "90dvh", width: "auto", height: "auto" }}
               />
             </div>
           ))}

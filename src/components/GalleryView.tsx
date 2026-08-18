@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Image from "next/image";
 import { AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import SwipeCarousel from "@/components/SwipeCarousel";
@@ -24,21 +25,13 @@ function GalleryTile({
   onClick: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
-
-  // Handle cached images that might not fire onLoad
-  useEffect(() => {
-    if (imgRef.current?.complete) {
-      setLoaded(true);
-    }
-  }, []);
 
   return (
     <div
       className="mb-2 sm:mb-3 relative group cursor-pointer overflow-hidden rounded-lg sm:rounded-xl active:scale-[0.97] transition-transform duration-150"
       onClick={onClick}
     >
-      {/* Skeleton: fixed min-height so layout doesn't shift before image loads */}
+      {/* Skeleton — visible until image finishes loading */}
       <div
         className={`w-full bg-white/[0.06] rounded-lg sm:rounded-xl transition-opacity duration-500 ${
           loaded ? "opacity-0 absolute inset-0 pointer-events-none" : "opacity-100"
@@ -47,19 +40,26 @@ function GalleryTile({
         aria-hidden
       />
 
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        ref={imgRef}
+      {/*
+        Next.js <Image> proxies the Supabase signed URL through Vercel's image
+        pipeline: resizes to the requested width, converts to AVIF/WebP, and
+        caches at the edge CDN — dramatically faster repeat loads.
+        width/height are optimiser hints (not rendered size); style keeps the
+        natural aspect ratio in the masonry column.
+      */}
+      <Image
         src={img.url}
         alt={`Gallery item ${index + 1}`}
-        className={`w-full h-auto object-cover block transition-opacity duration-[400ms] ease-out ${
+        width={800}
+        height={600}
+        className={`w-full h-auto object-cover block transition-opacity duration-300 ease-out ${
           loaded ? "opacity-100" : "opacity-0"
         }`}
-        loading={isPriority ? "eager" : "lazy"}
-        fetchPriority={isPriority ? "high" : "low"}
-        decoding={isPriority ? "sync" : "async"}
+        priority={isPriority}
         sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
         onLoad={() => setLoaded(true)}
+        style={{ width: "100%", height: "auto" }}
+        unoptimized={false}
       />
 
       {/* Hover overlay — desktop only */}
@@ -75,8 +75,8 @@ export default function GalleryView({ pin }: { pin: string }) {
   const [loading, setLoading] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
-  // Image loading limit
-  const [visibleLimit, setVisibleLimit] = useState(12);
+  // Image loading limit — start with 20 to ensure full screen coverage on first load
+  const [visibleLimit, setVisibleLimit] = useState(20);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // Layout state
