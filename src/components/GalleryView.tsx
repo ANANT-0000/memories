@@ -11,10 +11,6 @@ type ImageType = {
   sort_order: number;
 };
 
-// How many images are above-the-fold and need priority loading
-// (2 columns × ~3 visible rows = 6 images)
-const PRIORITY_COUNT = 6;
-
 // ── Single image tile ─────────────────────────────────────────────────────────
 function GalleryTile({
   img,
@@ -27,41 +23,19 @@ function GalleryTile({
   isPriority: boolean;
   onClick: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [shouldRender, setShouldRender] = useState(isPriority);
   const [loaded, setLoaded] = useState(false);
-
   const imgRef = useRef<HTMLImageElement>(null);
-
-  // Non-priority tiles: start rendering once 200px from viewport
-  useEffect(() => {
-    if (isPriority) return; // already rendering
-    const el = ref.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setShouldRender(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "200px 0px" }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [isPriority]);
 
   // Handle cached images that might not fire onLoad
   useEffect(() => {
-    if (shouldRender && imgRef.current?.complete) {
+    if (imgRef.current?.complete) {
       setLoaded(true);
     }
-  }, [shouldRender]);
+  }, []);
 
   return (
     <div
-      ref={ref}
-      className="break-inside-avoid mb-2 sm:mb-3 relative group cursor-pointer overflow-hidden rounded-lg sm:rounded-xl"
+      className="mb-2 sm:mb-3 relative group cursor-pointer overflow-hidden rounded-lg sm:rounded-xl"
       onClick={onClick}
     >
       {/* Skeleton: fixed min-height so layout doesn't shift before image loads */}
@@ -73,32 +47,27 @@ function GalleryTile({
         aria-hidden
       />
 
-      {shouldRender && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <motion.img
-          ref={imgRef}
-          src={img.url}
-          alt={`Gallery item ${index + 1}`}
-          className="w-full h-auto object-cover block"
-          // Priority images: eager + high fetchPriority — browser loads them immediately
-          // Off-screen images: lazy + low fetchPriority — loaded only when near viewport
-          loading={isPriority ? "eager" : "lazy"}
-          fetchPriority={isPriority ? "high" : "low"}
-          decoding={isPriority ? "sync" : "async"}
-          // Hint browser to right size: ~50vw on mobile, ~33vw on tablet, ~25vw on desktop
-          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-          onLoad={() => setLoaded(true)}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: loaded ? 1 : 0 }}
-          transition={{
-            opacity: {
-              duration: isPriority ? 0.25 : 0.4,
-              delay: isPriority ? index * 0.03 : 0,
-              ease: "easeOut",
-            },
-          }}
-        />
-      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <motion.img
+        ref={imgRef}
+        src={img.url}
+        alt={`Gallery item ${index + 1}`}
+        className="w-full h-auto object-cover block"
+        loading={isPriority ? "eager" : "lazy"}
+        fetchPriority={isPriority ? "high" : "low"}
+        decoding={isPriority ? "sync" : "async"}
+        sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+        onLoad={() => setLoaded(true)}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: loaded ? 1 : 0 }}
+        transition={{
+          opacity: {
+            duration: isPriority ? 0.25 : 0.4,
+            delay: isPriority ? index * 0.03 : 0,
+            ease: "easeOut",
+          },
+        }}
+      />
 
       {/* Hover overlay — desktop only */}
       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-200 hidden sm:block pointer-events-none" />
@@ -111,26 +80,80 @@ export default function GalleryView() {
   const router = useRouter();
   const [images, setImages] = useState<ImageType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSessionValid, setIsSessionValid] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
+  // Image loading limit
+  const [visibleLimit, setVisibleLimit] = useState(12);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  // Layout state
+  const [columnsCount, setColumnsCount] = useState(2);
+
+  // 1. Session check on mount
   useEffect(() => {
-    // ── Session guard ──────────────────────────────────────────────────────
-    // sessionStorage is wiped by the browser on tab/window close.
-    // If the flag is missing this is a new session — go straight to /lock.
-    // PinScreen will clear the old cookie on mount before asking for the PIN.
-    if (!sessionStorage.getItem('gallery_session')) {
-      window.location.replace('/lock');
+    if (!sessionStorage.getItem("gallery_session")) {
+      // Clear cookie and redirect so it asks for PIN again
+      fetch("/api/auth", { method: "DELETE" }).catch(() => {});
+      window.location.replace("/lock");
       return;
     }
+    
+    setIsSessionValid(true);
+  }, []);
+
+  // 2. Fetch images
+  useEffect(() => {
+    if (!isSessionValid) return;
 
     fetch("/api/images")
-      .then((r) => r.json())
+      .then((r) => {
+        if (r.status === 401) {
+          window.location.replace("/lock");
+          return;
+        }
+        return r.json();
+      })
       .then((data) => {
-        if (data.images) setImages(data.images);
+        if (data?.images) setImages(data.images);
       })
       .catch((e) => console.error("Failed to fetch images", e))
       .finally(() => setLoading(false));
+  }, [isSessionValid]);
+
+  // 3. Responsive columns
+  useEffect(() => {
+    const updateColumns = () => {
+      if (window.innerWidth >= 1280) setColumnsCount(5); // xl
+      else if (window.innerWidth >= 1024) setColumnsCount(4); // lg
+      else if (window.innerWidth >= 640) setColumnsCount(3); // sm
+      else setColumnsCount(2);
+    };
+
+    updateColumns();
+    window.addEventListener("resize", updateColumns);
+    return () => window.removeEventListener("resize", updateColumns);
   }, []);
+
+  // 4. Infinite scroll / lazy loading logic
+  useEffect(() => {
+    if (loading || !isSessionValid || images.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisibleLimit((prev) => Math.min(prev + 12, images.length));
+        }
+      },
+      { rootMargin: "400px" } // trigger before user hits the bottom
+    );
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [loading, isSessionValid, images.length]);
 
   const handleNext = useCallback(() => {
     setSelectedIndex((i) => (i === null ? null : (i + 1) % images.length));
@@ -141,6 +164,11 @@ export default function GalleryView() {
       i === null ? null : (i - 1 + images.length) % images.length
     );
   }, [images.length]);
+
+  if (!isSessionValid) {
+    // Return nothing while checking session to prevent flash of content
+    return null;
+  }
 
   if (loading) {
     return (
@@ -153,6 +181,17 @@ export default function GalleryView() {
     );
   }
 
+  // Distribute visible images into columns for JS-based masonry
+  const visibleImages = images.slice(0, visibleLimit);
+  const columns: { img: ImageType; originalIndex: number }[][] = Array.from(
+    { length: columnsCount },
+    () => []
+  );
+
+  visibleImages.forEach((img, index) => {
+    columns[index % columnsCount].push({ img, originalIndex: index });
+  });
+
   return (
     <div className="min-h-dvh bg-black">
       {/* Header */}
@@ -161,7 +200,7 @@ export default function GalleryView() {
       </header>
 
       {/* Gallery Grid */}
-      <main className="p-2 sm:p-4">
+      <main className="p-2 sm:p-4 pb-20">
         {images.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32 gap-4">
             <p className="text-white/30 text-sm">No images yet.</p>
@@ -173,17 +212,30 @@ export default function GalleryView() {
             </button>
           </div>
         ) : (
-          <div className="columns-2 sm:columns-3 lg:columns-4 xl:columns-5 gap-2 sm:gap-3">
-            {images.map((img, index) => (
-              <GalleryTile
-                key={img.id}
-                img={img}
-                index={index}
-                isPriority={index < PRIORITY_COUNT}
-                onClick={() => setSelectedIndex(index)}
-              />
-            ))}
-          </div>
+          <>
+            <div className="flex gap-2 sm:gap-3 items-start">
+              {columns.map((col, colIndex) => (
+                <div key={colIndex} className="flex-1 flex flex-col">
+                  {col.map((item) => (
+                    <GalleryTile
+                      key={item.img.id}
+                      img={item.img}
+                      index={item.originalIndex}
+                      isPriority={item.originalIndex < 6}
+                      onClick={() => setSelectedIndex(item.originalIndex)}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+            
+            {/* Infinite Scroll Sentinel */}
+            {visibleLimit < images.length && (
+              <div ref={loadMoreRef} className="h-20 w-full mt-4 flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+              </div>
+            )}
+          </>
         )}
       </main>
 

@@ -37,8 +37,19 @@ function setCachedUrl(path: string, url: string) {
   });
 }
 
-// ─── GET /api/images — public, no auth required ───────────────────────────────
+// ─── GET /api/images — protected, auth_token or admin_token required ────────
 export async function GET() {
+  const cookieStore = await cookies();
+  const authToken = cookieStore.get("auth_token");
+  const adminToken = cookieStore.get("admin_token");
+
+  if (!authToken && !adminToken) {
+    return NextResponse.json(
+      { success: false, message: "Authentication required." },
+      { status: 401 }
+    );
+  }
+
   try {
     const supabase = getAdminSupabase();
 
