@@ -9,6 +9,8 @@
     "lint": "oxlint",
     "lint:ci": "oxlint --deny-warnings",
     "lint:fix": "oxlint --fix",
+    "analyze:nexus": "gitnexus analyze --wal-checkpoint-threshold 67108864",
+    "analyze:graph": "python -m graphify . --code-only",
     "prepare": "husky"
   },
   "dependencies": {
