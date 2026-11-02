@@ -1,0 +1,8 @@
+{
+  "*.{js,jsx,ts,tsx,mjs,cjs}": [
+    "oxlint"
+  ],
+  "src/**/*.{js,jsx,ts,tsx,mjs,cjs}": [
+    "oxlint"
+  ]
+}
