@@ -8,6 +8,14 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { isAllowedImage, MAX_IMAGE_SIZE_BYTES } from "@/lib/validations/image";
+
+export enum UploadStatus {
+  Pending = "pending",
+  Uploading = "uploading",
+  Done = "done",
+  Error = "error",
+}
 
 type ImageType = {
   id: string;
@@ -18,10 +26,70 @@ type ImageType = {
 type UploadItem = {
   id: string;
   name: string;
-  status: "pending" | "uploading" | "done" | "error";
+  status: UploadStatus;
   savedPercent?: number;
   error?: string;
 };
+
+type QueueTask = {
+  id: string;
+  file?: File;
+  name: string;
+  status: UploadStatus;
+  savedPercent?: number;
+  error?: string;
+  retries: number;
+};
+
+const MAX_CONCURRENT_WORKERS = 2;
+
+// ─── Client-side pre-compression to bypass Vercel serverless payload limits ───
+async function compressImageClient(
+  file: File
+): Promise<{ blob: Blob; savedPercent: number; contentType: string }> {
+  if (file.type === "image/svg+xml") {
+    return { blob: file, savedPercent: 0, contentType: file.type };
+  }
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxDim = 1600;
+    let { width, height } = bitmap;
+
+    if (width > maxDim || height > maxDim) {
+      if (width > height) {
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
+      } else {
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
+      }
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return { blob: file, savedPercent: 0, contentType: file.type || "image/jpeg" };
+    }
+
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), "image/webp", 0.9);
+    });
+
+    if (blob && blob.size > 0 && blob.size < file.size) {
+      const savedPercent = Math.max(0, Math.round((1 - blob.size / file.size) * 100));
+      return { blob, savedPercent, contentType: "image/webp" };
+    }
+    return { blob: blob || file, savedPercent: 0, contentType: "image/webp" };
+  } catch {
+    return { blob: file, savedPercent: 0, contentType: file.type || "image/jpeg" };
+  }
+}
 
 export default function AdminDashboard({ initialImages }: { initialImages: ImageType[] }) {
   const [images, setImages] = useState<ImageType[]>(initialImages);
@@ -32,80 +100,204 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tasksRef = useRef<QueueTask[]>([]);
+  const activeWorkersRef = useRef(0);
   const router = useRouter();
 
-  // ─── Upload logic ────────────────────────────────────────────────────────────
-  const uploadFile = async (file: File, queueId: string) => {
-    setUploadQueue((q) => q.map((u) => u.id === queueId ? { ...u, status: "uploading" } : u));
+  // ─── Queue State Sync ────────────────────────────────────────────────────────
+  const syncQueueState = useCallback(() => {
+    setUploadQueue(
+      tasksRef.current.map((t) => ({
+        id: t.id,
+        name: t.name,
+        status: t.status,
+        savedPercent: t.savedPercent,
+        error: t.error,
+      }))
+    );
+  }, []);
 
-    const fd = new FormData();
-    fd.append("file", file);
+  const refreshImageList = useCallback(async () => {
+    try {
+      const res = await fetch("/api/images");
+      const data = await res.json();
+      if (data.success && Array.isArray(data.images)) {
+        setImages(data.images);
+      }
+    } catch {
+      // non-critical background refresh
+    }
+  }, []);
+
+  // ─── Worker execution logic ──────────────────────────────────────────────────
+  const executeTask = async (task: QueueTask) => {
+    if (!task.file) return;
+
+    task.status = UploadStatus.Uploading;
+    syncQueueState();
 
     try {
+      // Step 1: Pre-compress image client-side to keep bytes light & fast
+      const { blob: uploadBlob, savedPercent, contentType } = await compressImageClient(task.file);
+
+      // Step 2: Request presigned direct upload URL (bypasses Vercel 4.5MB payload limit)
+      const urlRes = await fetch("/api/images/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: task.file.name,
+          contentType,
+        }),
+      });
+      const urlData = await urlRes.json();
+
+      let uploadSuccess = false;
+      let finalStoragePath = "";
+
+      if (urlRes.ok && urlData.success && urlData.signedUrl && urlData.path) {
+        // Direct stream to Supabase Storage signed upload URL
+        const uploadRes = await fetch(urlData.signedUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": contentType,
+          },
+          body: uploadBlob,
+        });
+
+        if (uploadRes.ok) {
+          uploadSuccess = true;
+          finalStoragePath = urlData.path;
+        }
+      }
+
+      if (uploadSuccess && finalStoragePath) {
+        // Step 3: Register DB record with light JSON payload (< 1KB)
+        const regRes = await fetch("/api/images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            storagePath: finalStoragePath,
+            savedPercent,
+          }),
+        });
+        const regData = await regRes.json();
+
+        if (regRes.ok && regData.success) {
+          task.status = UploadStatus.Done;
+          task.savedPercent = savedPercent;
+          syncQueueState();
+          refreshImageList();
+          return;
+        }
+      }
+
+      // Step 4: Fallback to standard multipart upload if direct presigned upload was unavailable
+      const fd = new FormData();
+      fd.append("file", uploadBlob, task.file.name);
+
       const res = await fetch("/api/images", { method: "POST", body: fd });
       const data = await res.json();
 
-      if (data.success) {
-        setUploadQueue((q) =>
-          q.map((u) => u.id === queueId ? { ...u, status: "done", savedPercent: data.compression?.savedPercent } : u)
-        );
-        // Image list refresh is handled in processFiles after all uploads complete
+      if (res.ok && data.success) {
+        task.status = UploadStatus.Done;
+        task.savedPercent = data.compression?.savedPercent ?? savedPercent;
+        syncQueueState();
+        refreshImageList();
       } else {
-        setUploadQueue((q) =>
-          q.map((u) => u.id === queueId ? { ...u, status: "error", error: data.message } : u)
-        );
+        task.status = UploadStatus.Error;
+        task.error = data.message || "Upload failed";
+        syncQueueState();
       }
     } catch {
-      setUploadQueue((q) =>
-        q.map((u) => u.id === queueId ? { ...u, status: "error", error: "Network error" } : u)
-      );
+      if (task.retries < 2) {
+        task.retries += 1;
+        task.status = UploadStatus.Pending;
+        syncQueueState();
+        await new Promise((r) => setTimeout(r, 1000 * task.retries));
+      } else {
+        task.status = UploadStatus.Error;
+        task.error = "Network error";
+        syncQueueState();
+      }
     }
   };
 
-  // ─── Controlled upload queue (max CONCURRENCY uploads at once) ───────────────
-  const CONCURRENCY = 2;
+  const pumpQueue = () => {
+    while (activeWorkersRef.current < MAX_CONCURRENT_WORKERS) {
+      const nextTask = tasksRef.current.find((t) => t.status === UploadStatus.Pending && t.file);
+      if (!nextTask) break;
 
-  const processFiles = async (files: File[]) => {
-    const imageFiles = files.filter((f) => {
-      const type = f.type.toLowerCase();
-      const name = f.name.toLowerCase();
-      const ext = name.match(/\.[0-9a-z]+$/)?.[0] || "";
-      const validExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif", ".tiff", ".tif", ".bmp"];
-      return type.startsWith("image/") || validExts.includes(ext);
-    });
-    if (!imageFiles.length) return;
+      activeWorkersRef.current += 1;
+      (async () => {
+        try {
+          await executeTask(nextTask);
+        } finally {
+          activeWorkersRef.current -= 1;
+          pumpQueue();
 
-    const items: UploadItem[] = imageFiles.map((f) => ({
-      id: `${Date.now()}-${Math.random()}`,
-      name: f.name,
-      status: "pending",
-    }));
-    setUploadQueue((q) => [...q, ...items]);
+          const hasRemaining = tasksRef.current.some(
+            (t) => t.status === UploadStatus.Pending || t.status === UploadStatus.Uploading
+          );
+          if (!hasRemaining && activeWorkersRef.current === 0) {
+            refreshImageList();
+          }
+        }
+      })();
+    }
+  };
 
-    // Run uploads with at most CONCURRENCY in-flight at once
-    const pairs = imageFiles.map((f, i) => ({ file: f, queueId: items[i].id }));
-    let cursor = 0;
+  const processFiles = (files: File[]) => {
+    if (!files.length) return;
 
-    const runNext = async (): Promise<void> => {
-      if (cursor >= pairs.length) return;
-      const { file, queueId } = pairs[cursor++];
-      await uploadFile(file, queueId);
-      await runNext(); // pick up the next job in this "slot"
-    };
+    const newTasks: QueueTask[] = [];
 
-    // Start CONCURRENCY slots concurrently
-    await Promise.all(
-      Array.from({ length: Math.min(CONCURRENCY, pairs.length) }, runNext)
-    );
+    for (const file of files) {
+      const taskId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const fileName = file.name || "unnamed";
 
-    // After all uploads finish, do a single refresh of the image list
-    try {
-      const listRes = await fetch("/api/images");
-      const listData = await listRes.json();
-      if (listData.success && listData.images) {
-        setImages(listData.images);
+      if (!isAllowedImage(fileName, file.type)) {
+        newTasks.push({
+          id: taskId,
+          name: fileName,
+          status: UploadStatus.Error,
+          error: "Unsupported type",
+          retries: 0,
+        });
+        continue;
       }
-    } catch { /* non-critical */ }
+
+      if (file.size > MAX_IMAGE_SIZE_BYTES) {
+        newTasks.push({
+          id: taskId,
+          name: fileName,
+          status: UploadStatus.Error,
+          error: "Exceeds 50MB",
+          retries: 0,
+        });
+        continue;
+      }
+
+      newTasks.push({
+        id: taskId,
+        file,
+        name: fileName,
+        status: UploadStatus.Pending,
+        retries: 0,
+      });
+    }
+
+    if (!newTasks.length) return;
+
+    tasksRef.current = [...tasksRef.current, ...newTasks];
+    syncQueueState();
+    pumpQueue();
+  };
+
+  const clearQueue = () => {
+    tasksRef.current = tasksRef.current.filter(
+      (t) => t.status === UploadStatus.Uploading || t.status === UploadStatus.Pending
+    );
+    syncQueueState();
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -201,7 +393,9 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
     router.push("/admin/lock");
   };
 
-  const activeUploads = uploadQueue.filter((u) => u.status === "uploading" || u.status === "pending");
+  const activeUploads = uploadQueue.filter(
+    (u) => u.status === UploadStatus.Uploading || u.status === UploadStatus.Pending
+  );
 
   return (
     <div className="min-h-dvh bg-zinc-950 pb-32">
@@ -313,7 +507,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                     <div className="flex justify-between items-center mb-1">
                       <p className="text-white/30 text-xs uppercase tracking-widest font-semibold">Uploads</p>
                       {activeUploads.length === 0 && (
-                        <button onClick={() => setUploadQueue([])} className="text-white/20 text-xs hover:text-white/40 transition-colors">
+                        <button onClick={clearQueue} className="text-white/20 text-xs hover:text-white/40 transition-colors">
                           Clear
                         </button>
                       )}
@@ -325,16 +519,16 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                         animate={{ opacity: 1, y: 0 }}
                         className="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3"
                       >
-                        {item.status === "done" && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
-                        {item.status === "error" && <XCircle className="w-4 h-4 text-red-400 shrink-0" />}
-                        {(item.status === "uploading" || item.status === "pending") && (
-                          <Loader2 className={`w-4 h-4 shrink-0 ${item.status === "uploading" ? "text-amber-400 animate-spin" : "text-white/20"}`} />
+                        {item.status === UploadStatus.Done && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
+                        {item.status === UploadStatus.Error && <XCircle className="w-4 h-4 text-red-400 shrink-0" />}
+                        {(item.status === UploadStatus.Uploading || item.status === UploadStatus.Pending) && (
+                          <Loader2 className={`w-4 h-4 shrink-0 ${item.status === UploadStatus.Uploading ? "text-amber-400 animate-spin" : "text-white/20"}`} />
                         )}
                         <span className="text-white/60 text-sm truncate flex-1 min-w-0">{item.name}</span>
-                        {item.status === "done" && item.savedPercent !== undefined && (
+                        {item.status === UploadStatus.Done && item.savedPercent !== undefined && (
                           <span className="text-green-400/60 text-xs shrink-0">-{item.savedPercent}%</span>
                         )}
-                        {item.status === "error" && (
+                        {item.status === UploadStatus.Error && (
                           <span className="text-red-400/60 text-xs shrink-0 max-w-[100px] text-right">{item.error}</span>
                         )}
                       </motion.div>

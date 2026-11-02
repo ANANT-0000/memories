@@ -19,7 +19,7 @@ const nextConfig: NextConfig = {
     // smaller files than WebP; others fall back automatically.
     formats: ["image/avif", "image/webp"],
     // Vercel caches optimised images for 1 year by default (immutable URLs).
-    minimumCacheTTL: 3600,
+    minimumCacheTTL: 31536000,
   },
 
   // Experimental: enable faster SWC minification

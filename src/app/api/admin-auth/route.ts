@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { logger } from '@/lib/logger';
+import { serverEnv } from '@/lib/env/server';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 const PIN_MAX_LENGTH = 8;
 const RATE_LIMIT_ATTEMPTS = 5;
@@ -52,9 +57,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const validAdminPin = process.env.ADMIN_PIN;
+  const validAdminPin = serverEnv.ADMIN_PIN;
   if (!validAdminPin) {
-    console.error('[POST /api/admin-auth] ADMIN_PIN env variable not configured.');
+    logger.error('ADMIN_PIN env variable not configured in /api/admin-auth');
     return NextResponse.json(
       { success: false, message: 'Server misconfiguration. Contact administrator.' },
       { status: 500 }
@@ -84,7 +89,7 @@ export async function POST(request: Request) {
   attemptMap.delete(ip);
   (await cookies()).set('admin_token', 'admin_authenticated', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: serverEnv.NODE_ENV === 'production',
     path: '/',
     sameSite: 'lax',
   });

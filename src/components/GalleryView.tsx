@@ -100,7 +100,9 @@ export default function GalleryView({ pin }: { pin: string }) {
       .then((data) => {
         if (data?.images) setImages(data.images);
       })
-      .catch((e) => console.error("Failed to fetch images", e))
+      .catch(() => {
+        // Fallback gracefully on fetch error; empty gallery state handles presentation
+      })
       .finally(() => setLoading(false));
   }, [pin]);
 

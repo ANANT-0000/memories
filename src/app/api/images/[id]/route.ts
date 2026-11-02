@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getAdminSupabase } from '@/lib/supabaseClient';
 import { cookies } from 'next/headers';
+import { logger } from '@/lib/logger';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 export async function DELETE(
   _request: Request,
@@ -9,6 +13,7 @@ export async function DELETE(
   // 1. Admin auth check
   const adminToken = (await cookies()).get('admin_token');
   if (!adminToken) {
+    logger.warn('Forbidden delete attempt without admin token');
     return NextResponse.json(
       { success: false, message: 'Admin authentication required.' },
       { status: 403 }
@@ -35,7 +40,7 @@ export async function DELETE(
       .single();
 
     if (fetchError || !image) {
-      console.error('[DELETE /api/images/[id]] Fetch error:', fetchError?.message);
+      logger.error('Failed to locate image for deletion', fetchError, { id });
       return NextResponse.json(
         { success: false, message: 'Image not found in database.' },
         { status: 404 }
@@ -51,7 +56,7 @@ export async function DELETE(
       .eq('id', id);
 
     if (dbError) {
-      console.error('[DELETE /api/images/[id]] DB delete error:', dbError.message);
+      logger.error('Failed to delete image record from DB', dbError, { id });
       return NextResponse.json(
         { success: false, message: 'Failed to delete image record from database.' },
         { status: 500 }
@@ -65,17 +70,18 @@ export async function DELETE(
       .remove([storagePath]);
 
     if (storageError) {
-      // Log but don't fail — DB record is already gone, storage orphan is not critical
-      console.warn(
-        `[DELETE /api/images/[id]] Storage delete warning for "${storagePath}":`,
-        storageError.message
-      );
+      logger.warn('Storage file cleanup warning after DB delete', {
+        id,
+        storagePath,
+        error: storageError.message,
+      });
+    } else {
+      logger.info('Image deleted successfully from DB and Storage', { id, storagePath });
     }
 
     return NextResponse.json({ success: true });
-
   } catch (err) {
-    console.error('[DELETE /api/images/[id]] Unexpected error:', err);
+    logger.error('Unexpected error in DELETE /api/images/[id]', err, { id });
     return NextResponse.json(
       { success: false, message: 'An unexpected error occurred during deletion.' },
       { status: 500 }
