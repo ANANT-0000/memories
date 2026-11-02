@@ -4,11 +4,12 @@ import { useState, useRef, useCallback } from "react";
 import {
   UploadCloud, Loader2, Trash2, ArrowLeft,
   Image as ImageIcon, LogOut, CheckCircle,
-  XCircle, Check, X
+  XCircle, Check, X, AlertTriangle
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { isAllowedImage, MAX_IMAGE_SIZE_BYTES } from "@/lib/validations/image";
+import { findDuplicateMatch } from "@/lib/utils/similarity";
 
 export const UploadStatus = {
   Pending: "pending",
@@ -16,6 +17,7 @@ export const UploadStatus = {
   Uploading: "uploading",
   Done: "done",
   Error: "error",
+  Duplicate: "duplicate",
 } as const;
 
 export type UploadStatus = (typeof UploadStatus)[keyof typeof UploadStatus];
@@ -26,12 +28,22 @@ type ImageType = {
   sort_order: number;
 };
 
+export interface DuplicateInfo {
+  matchedUrl: string;
+  matchedPreviewUrl?: string | undefined;
+  similarity: number;
+  matchedBaseName: string;
+  localPreviewUrl?: string | undefined;
+}
+
 type UploadItem = {
   id: string;
   name: string;
   status: UploadStatus;
   savedPercent?: number | undefined;
   error?: string | undefined;
+  duplicateInfo?: DuplicateInfo | undefined;
+  force?: boolean | undefined;
 };
 
 type QueueTask = {
@@ -41,6 +53,8 @@ type QueueTask = {
   status: UploadStatus;
   savedPercent?: number | undefined;
   error?: string | undefined;
+  duplicateInfo?: DuplicateInfo | undefined;
+  force?: boolean | undefined;
   retries: number;
 };
 
@@ -116,13 +130,15 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
         status: t.status,
         savedPercent: t.savedPercent,
         error: t.error,
+        duplicateInfo: t.duplicateInfo,
+        force: t.force,
       }))
     );
   }, []);
 
   const refreshImageList = useCallback(async () => {
     try {
-      const res = await fetch("/api/images");
+      const res = await fetch("/api/images?sort=desc");
       const data = await res.json();
       if (data.success && Array.isArray(data.images)) {
         setImages(data.images);
@@ -150,9 +166,24 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
         body: JSON.stringify({
           filename: task.file.name,
           contentType,
+          force: task.force ?? false,
         }),
       });
       const urlData = await urlRes.json();
+
+      if (urlRes.status === 409 && urlData.duplicate) {
+        task.status = UploadStatus.Duplicate;
+        task.duplicateInfo = {
+          matchedUrl: urlData.matchedUrl,
+          matchedPreviewUrl: urlData.matchedPreviewUrl,
+          similarity: urlData.similarity,
+          matchedBaseName: urlData.matchedBaseName ?? "Existing Image",
+          localPreviewUrl: task.file ? URL.createObjectURL(task.file) : undefined,
+        };
+        task.error = urlData.message || "File already exists in gallery";
+        syncQueueState();
+        return;
+      }
 
       let uploadSuccess = false;
       let finalStoragePath = "";
@@ -197,9 +228,26 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
       // Step 4: Fallback to standard multipart upload if direct presigned upload was unavailable
       const fd = new FormData();
       fd.append("file", uploadBlob, task.file.name);
+      if (task.force) {
+        fd.append("force", "true");
+      }
 
       const res = await fetch("/api/images", { method: "POST", body: fd });
       const data = await res.json();
+
+      if (res.status === 409 && data.duplicate) {
+        task.status = UploadStatus.Duplicate;
+        task.duplicateInfo = {
+          matchedUrl: data.matchedUrl,
+          matchedPreviewUrl: data.matchedPreviewUrl,
+          similarity: data.similarity,
+          matchedBaseName: data.matchedBaseName ?? "Existing Image",
+          localPreviewUrl: task.file ? URL.createObjectURL(task.file) : undefined,
+        };
+        task.error = data.message || "File already exists in gallery";
+        syncQueueState();
+        return;
+      }
 
       if (res.ok && data.success) {
         task.status = UploadStatus.Done;
@@ -249,10 +297,26 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
     }
   };
 
+  const handleForceUpload = (taskId: string) => {
+    const task = tasksRef.current.find((t) => t.id === taskId);
+    if (!task) return;
+    task.force = true;
+    task.status = UploadStatus.Pending;
+    task.error = undefined;
+    syncQueueState();
+    pumpQueue();
+  };
+
+  const handleSkipDuplicate = (taskId: string) => {
+    tasksRef.current = tasksRef.current.filter((t) => t.id !== taskId);
+    syncQueueState();
+  };
+
   const processFiles = (files: File[]) => {
     if (!files.length) return;
 
     const newTasks: QueueTask[] = [];
+    const existingUrls = images.map((img) => img.url);
 
     for (const file of files) {
       const taskId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -280,6 +344,35 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
         continue;
       }
 
+      // Pre-check for duplicate files against currently loaded gallery images
+      const duplicateMatch = findDuplicateMatch(fileName, existingUrls, 0.90);
+      if (duplicateMatch.isDuplicate && duplicateMatch.matchedUrl) {
+        const targetUrl = duplicateMatch.matchedUrl;
+        const matchedImg = images.find(
+          (img) =>
+            img.url === targetUrl ||
+            img.url.includes(targetUrl) ||
+            targetUrl.includes(img.url)
+        );
+
+        newTasks.push({
+          id: taskId,
+          file,
+          name: fileName,
+          status: UploadStatus.Duplicate,
+          error: `Matches "${duplicateMatch.matchedBaseName}" (${Math.round(duplicateMatch.similarity * 100)}%)`,
+          retries: 0,
+          duplicateInfo: {
+            matchedUrl: duplicateMatch.matchedUrl,
+            matchedPreviewUrl: matchedImg?.url,
+            similarity: duplicateMatch.similarity,
+            matchedBaseName: duplicateMatch.matchedBaseName ?? "Existing Image",
+            localPreviewUrl: URL.createObjectURL(file),
+          },
+        });
+        continue;
+      }
+
       newTasks.push({
         id: taskId,
         file,
@@ -288,8 +381,6 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
         retries: 0,
       });
     }
-
-    if (!newTasks.length) return;
 
     tasksRef.current = [...tasksRef.current, ...newTasks];
     syncQueueState();
@@ -515,27 +606,117 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                         </button>
                       )}
                     </div>
-                    {uploadQueue.map((item) => (
-                      <motion.div
-                        key={item.id}
-                        initial={{ opacity: 0, y: -6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3"
-                      >
-                        {item.status === UploadStatus.Done && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
-                        {item.status === UploadStatus.Error && <XCircle className="w-4 h-4 text-red-400 shrink-0" />}
-                        {(item.status === UploadStatus.Uploading || item.status === UploadStatus.Pending) && (
-                          <Loader2 className={`w-4 h-4 shrink-0 ${item.status === UploadStatus.Uploading ? "text-amber-400 animate-spin" : "text-white/20"}`} />
-                        )}
-                        <span className="text-white/60 text-sm truncate flex-1 min-w-0">{item.name}</span>
-                        {item.status === UploadStatus.Done && item.savedPercent !== undefined && (
-                          <span className="text-green-400/60 text-xs shrink-0">-{item.savedPercent}%</span>
-                        )}
-                        {item.status === UploadStatus.Error && (
-                          <span className="text-red-400/60 text-xs shrink-0 max-w-[100px] text-right">{item.error}</span>
-                        )}
-                      </motion.div>
-                    ))}
+                    {uploadQueue.map((item) => {
+                      if (item.status === UploadStatus.Duplicate) {
+                        return (
+                          <motion.div
+                            key={item.id}
+                            initial={{ opacity: 0, y: -6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-3 flex flex-col gap-2.5"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                                <span className="text-amber-300 font-medium text-xs">
+                                  Duplicate Found ({Math.round((item.duplicateInfo?.similarity ?? 0.95) * 100)}% match)
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleSkipDuplicate(item.id)}
+                                className="text-white/40 hover:text-white p-1"
+                                title="Dismiss"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            <p className="text-white/60 text-xs">
+                              File appears to already exist in gallery:{" "}
+                              <span className="text-white font-medium">&quot;{item.duplicateInfo?.matchedBaseName}&quot;</span>
+                            </p>
+
+                            {/* Comparison preview area */}
+                            <div className="grid grid-cols-2 gap-2 bg-black/40 rounded-lg p-2 items-center">
+                              <div className="flex flex-col items-center gap-1 min-w-0">
+                                <span className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">New Upload</span>
+                                <div className="relative w-full aspect-square rounded-md overflow-hidden bg-white/5 border border-white/10">
+                                  {item.duplicateInfo?.localPreviewUrl ? (
+                                    /* oxlint-disable-next-line @next/next/no-img-element */
+                                    <img
+                                      src={item.duplicateInfo.localPreviewUrl}
+                                      alt="New candidate preview"
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-white/20 text-xs">New file</div>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-white/60 truncate max-w-full">{item.name}</span>
+                              </div>
+
+                              <div className="flex flex-col items-center gap-1 min-w-0">
+                                <span className="text-[10px] text-amber-400/80 uppercase tracking-wider font-semibold">In Gallery</span>
+                                <div className="relative w-full aspect-square rounded-md overflow-hidden bg-white/5 border border-amber-500/30">
+                                  {item.duplicateInfo?.matchedPreviewUrl ? (
+                                    /* oxlint-disable-next-line @next/next/no-img-element */
+                                    <img
+                                      src={item.duplicateInfo.matchedPreviewUrl}
+                                      alt="Existing gallery preview"
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-white/20 text-xs">Existing match</div>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-white/60 truncate max-w-full">{item.duplicateInfo?.matchedBaseName}</span>
+                              </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex gap-2 justify-end pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleSkipDuplicate(item.id)}
+                                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white/70 hover:text-white text-xs font-medium transition-colors"
+                              >
+                                Skip (Don&apos;t Upload)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleForceUpload(item.id)}
+                                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-medium transition-colors"
+                              >
+                                Upload Anyway
+                              </button>
+                            </div>
+                          </motion.div>
+                        );
+                      }
+
+                      return (
+                        <motion.div
+                          key={item.id}
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex items-center gap-3 bg-white/5 rounded-xl px-4 py-3"
+                        >
+                          {item.status === UploadStatus.Done && <CheckCircle className="w-4 h-4 text-green-400 shrink-0" />}
+                          {item.status === UploadStatus.Error && <XCircle className="w-4 h-4 text-red-400 shrink-0" />}
+                          {(item.status === UploadStatus.Uploading || item.status === UploadStatus.Pending) && (
+                            <Loader2 className={`w-4 h-4 shrink-0 ${item.status === UploadStatus.Uploading ? "text-amber-400 animate-spin" : "text-white/20"}`} />
+                          )}
+                          <span className="text-white/60 text-sm truncate flex-1 min-w-0">{item.name}</span>
+                          {item.status === UploadStatus.Done && item.savedPercent !== undefined && (
+                            <span className="text-green-400/60 text-xs shrink-0">-{item.savedPercent}%</span>
+                          )}
+                          {item.status === UploadStatus.Error && (
+                            <span className="text-red-400/60 text-xs shrink-0 max-w-[120px] text-right truncate">{item.error}</span>
+                          )}
+                        </motion.div>
+                      );
+                    })}
                   </motion.div>
                 )}
               </AnimatePresence>

@@ -6,11 +6,11 @@ export const dynamic = "force-dynamic"; // Ensure fresh data on admin load
 export default async function AdminPage() {
   const supabase = getAdminSupabase();
 
-  // Fetch all images for the admin
+  // Fetch all images for the admin in descending order (latest uploaded first)
   const { data: images } = await supabase
     .from("gallery_images")
     .select("*")
-    .order("sort_order", { ascending: true });
+    .order("sort_order", { ascending: false });
 
   let initialImages = images || [];
 

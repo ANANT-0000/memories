@@ -5,6 +5,7 @@ import sharp from 'sharp';
 import type { Metadata as SharpMetadata } from 'sharp';
 import { logger } from '@/lib/logger';
 import { serverEnv } from '@/lib/env/server';
+import { findDuplicateMatch } from '@/lib/utils/similarity';
 import {
   isAllowedImage,
   MAX_DIMENSION,
@@ -18,6 +19,65 @@ export const maxDuration = 60;
 
 // Restrict Sharp concurrency to 1 to protect memory on Vercel serverless instances during burst uploads
 sharp.concurrency(1);
+
+// Curates feed: ~60% latest uploads + ~40% random picks from older collection,
+// with the top items anchored to the latest uploads for fresh impression.
+function curateGalleryFeed<T extends { id: string }>(items: T[]): T[] {
+  if (items.length <= 4) {
+    return items;
+  }
+
+  const latestCount = Math.ceil(items.length * 0.6);
+  const latestPool = items.slice(0, latestCount);
+  const olderPool = items.slice(latestCount);
+
+  // Shuffle older pool (Fisher-Yates)
+  for (let i = olderPool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = olderPool[i];
+    const target = olderPool[j];
+    if (temp && target) {
+      olderPool[i] = target;
+      olderPool[j] = temp;
+    }
+  }
+
+  const result: T[] = [];
+  const addedIds = new Set<string>();
+
+  const pushUnique = (item: T | undefined) => {
+    if (item && !addedIds.has(item.id)) {
+      addedIds.add(item.id);
+      result.push(item);
+    }
+  };
+
+  // Anchor the first 3 images with guaranteed freshest uploads
+  const initialAnchor = Math.min(3, latestPool.length);
+  for (let i = 0; i < initialAnchor; i++) {
+    pushUnique(latestPool[i]);
+  }
+
+  let latestIdx = initialAnchor;
+  let olderIdx = 0;
+
+  // Interleave remaining items (3 latest for every 2 older ~ 60:40)
+  while (latestIdx < latestPool.length || olderIdx < olderPool.length) {
+    for (let k = 0; k < 3 && latestIdx < latestPool.length; k++) {
+      pushUnique(latestPool[latestIdx++]);
+    }
+    for (let k = 0; k < 2 && olderIdx < olderPool.length; k++) {
+      pushUnique(olderPool[olderIdx++]);
+    }
+  }
+
+  // Backstop: guarantee every single image is included without omission
+  for (const item of items) {
+    pushUnique(item);
+  }
+
+  return result;
+}
 
 // ─── In-process signed-URL cache ─────────────────────────────────────────────
 // 24 hours signed URL TTL prevents premature 403s on Vercel CDN cached images
@@ -66,11 +126,11 @@ export async function GET(request: Request) {
   try {
     const supabase = getAdminSupabase();
 
-    // 1. Fetch image records from DB (only what we need)
+    // 1. Fetch image records from DB in descending order (latest first)
     const { data: images, error: dbError } = await supabase
       .from('gallery_images')
       .select('id, url, sort_order')
-      .order('sort_order', { ascending: true });
+      .order('sort_order', { ascending: false });
 
     if (dbError) {
       logger.error('Database query failed in GET /api/images', dbError);
@@ -134,13 +194,24 @@ export async function GET(request: Request) {
         if (!url) return null;
         return { id: img.id, url, sort_order: img.sort_order };
       })
-      .filter(Boolean);
+      .filter((img): img is { id: string; url: string; sort_order: number } => img !== null);
+
+    const urlObj = new URL(request.url);
+    const sortParam = urlObj.searchParams.get('sort');
+    // Admin dashboard requests sort=desc; public gallery defaults to curated latest+random feed
+    const isFeedMode = sortParam === 'feed' || (!adminToken && sortParam !== 'desc');
+
+    const finalImages = isFeedMode
+      ? curateGalleryFeed(imagesWithUrls)
+      : imagesWithUrls;
 
     return NextResponse.json(
-      { success: true, images: imagesWithUrls },
+      { success: true, images: finalImages },
       {
         headers: {
-          'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
+          'Cache-Control': isFeedMode
+            ? 'public, max-age=15, stale-while-revalidate=60'
+            : 'private, no-cache',
         },
       }
     );
@@ -269,6 +340,42 @@ export async function POST(request: Request) {
       );
     }
 
+    const force = formData.get('force') === 'true';
+    const supabase = getAdminSupabase();
+
+    if (!force) {
+      const { data: existingRecords } = await supabase
+        .from('gallery_images')
+        .select('id, url');
+      const existingUrls = (existingRecords ?? []).map((r) => r.url);
+      const duplicateCheck = findDuplicateMatch(fileName, existingUrls, 0.90);
+
+      if (duplicateCheck.isDuplicate && duplicateCheck.matchedUrl) {
+        const { data: signedPreview } = await supabase.storage
+          .from('gallery_bucket')
+          .createSignedUrl(duplicateCheck.matchedUrl, 300);
+
+        logger.info('Duplicate image rejected in multipart upload fallback', {
+          fileName,
+          matchedUrl: duplicateCheck.matchedUrl,
+          similarity: duplicateCheck.similarity,
+        });
+
+        return NextResponse.json(
+          {
+            success: false,
+            duplicate: true,
+            similarity: duplicateCheck.similarity,
+            matchedUrl: duplicateCheck.matchedUrl,
+            matchedPreviewUrl: signedPreview?.signedUrl ?? null,
+            matchedBaseName: duplicateCheck.matchedBaseName,
+            message: `A similar file "${duplicateCheck.matchedBaseName}" is already in the gallery (${Math.round(duplicateCheck.similarity * 100)}% match).`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     let rawBuffer: Buffer;
     try {
       rawBuffer = Buffer.from(await file.arrayBuffer());
@@ -342,8 +449,6 @@ export async function POST(request: Request) {
       .slice(0, 80);
     const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const storagePath = `images/${uniqueSuffix}-${baseName}.webp`;
-
-    const supabase = getAdminSupabase();
 
     const { error: uploadError } = await supabase.storage
       .from('gallery_bucket')
