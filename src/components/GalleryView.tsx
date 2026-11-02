@@ -27,8 +27,9 @@ function GalleryTile({
   const [loaded, setLoaded] = useState(false);
 
   return (
-    <div
-      className="mb-2 sm:mb-3 relative group cursor-pointer overflow-hidden rounded-lg sm:rounded-xl active:scale-[0.97] transition-transform duration-150"
+    <button
+      type="button"
+      className="w-full text-left mb-2 sm:mb-3 relative group cursor-pointer overflow-hidden rounded-lg sm:rounded-xl active:scale-[0.97] transition-transform duration-150 block p-0 border-0 bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
       onClick={onClick}
     >
       {/* Skeleton — visible until image finishes loading */}
@@ -64,7 +65,7 @@ function GalleryTile({
 
       {/* Hover overlay — desktop only */}
       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-200 hidden sm:block pointer-events-none" />
-    </div>
+    </button>
   );
 }
 
@@ -159,13 +160,13 @@ export default function GalleryView({ pin }: { pin: string }) {
 
   // Distribute visible images into columns for JS-based masonry
   const visibleImages = images.slice(0, visibleLimit);
-  const columns: { img: ImageType; originalIndex: number }[][] = Array.from(
+  const columns: { id: string; items: { img: ImageType; originalIndex: number }[] }[] = Array.from(
     { length: columnsCount },
-    () => []
+    (_, colIdx) => ({ id: `masonry-col-${colIdx}`, items: [] })
   );
 
   visibleImages.forEach((img, index) => {
-    columns[index % columnsCount].push({ img, originalIndex: index });
+    columns[index % columnsCount].items.push({ img, originalIndex: index });
   });
 
   return (
@@ -185,9 +186,9 @@ export default function GalleryView({ pin }: { pin: string }) {
         ) : (
           <>
             <div className="flex gap-2 sm:gap-3 items-start">
-              {columns.map((col, colIndex) => (
-                <div key={colIndex} className="flex-1 flex flex-col">
-                  {col.map((item) => (
+              {columns.map((column) => (
+                <div key={column.id} className="flex-1 flex flex-col">
+                  {column.items.map((item) => (
                     <GalleryTile
                       key={item.img.id}
                       img={item.img}

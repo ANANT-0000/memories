@@ -276,12 +276,12 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
               transition={{ duration: 0.2 }}
               className="overflow-hidden mb-6"
             >
-              <div
-                onClick={() => inputRef.current?.click()}
+              {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+              <label
                 onDrop={handleDrop}
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
-                className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all block ${
                   dragOver
                     ? "border-amber-400/40 bg-amber-400/5"
                     : "border-white/10 hover:border-white/20 hover:bg-white/[0.02] active:bg-white/5"
@@ -300,7 +300,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
                   {dragOver ? "Drop to upload" : "Tap to select images"}
                 </p>
                 <p className="text-white/20 text-xs mt-1">Multiple files supported · Auto WebP compression</p>
-              </div>
+              </label>
 
               {/* Upload queue */}
               <AnimatePresence>

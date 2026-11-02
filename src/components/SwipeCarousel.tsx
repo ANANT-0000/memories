@@ -277,9 +277,9 @@ export default function SwipeCarousel({
       {/* Dot indicators */}
       {total > 1 && total <= 20 && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex gap-1.5 pointer-events-none">
-          {images.map((_, i) => (
+          {images.map((img, i) => (
             <div
-              key={i}
+              key={img.id}
               className="h-1.5 rounded-full transition-all duration-300"
               style={{
                 width: i === currentIndex ? 16 : 6,
