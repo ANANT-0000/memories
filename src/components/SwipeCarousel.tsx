@@ -88,8 +88,10 @@ export default function SwipeCarousel({
       img.src = url;
     };
     if (total > 1) {
-      preload(images[(currentIndex + 1) % total].url);
-      preload(images[(currentIndex - 1 + total) % total].url);
+      const nextImg = images[(currentIndex + 1) % total];
+      const prevImg = images[(currentIndex - 1 + total) % total];
+      if (nextImg) preload(nextImg.url);
+      if (prevImg) preload(prevImg.url);
     }
   }, [currentIndex, images, total]);
 

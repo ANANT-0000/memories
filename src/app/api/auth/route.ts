@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { serverEnv } from '@/lib/env/server';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -15,7 +16,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ success: false, message: 'Invalid PIN' }, { status: 401 });
-  } catch {
+  } catch (err: unknown) {
+    logger.warn('Bad request in /api/auth', { error: err });
     return NextResponse.json({ success: false, message: 'Bad request' }, { status: 400 });
   }
 }

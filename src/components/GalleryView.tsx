@@ -126,7 +126,7 @@ export default function GalleryView({ pin }: { pin: string }) {
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
+        if (entry && entry.isIntersecting) {
           setVisibleLimit((prev) => Math.min(prev + 12, images.length));
         }
       },
@@ -168,7 +168,10 @@ export default function GalleryView({ pin }: { pin: string }) {
   );
 
   visibleImages.forEach((img, index) => {
-    columns[index % columnsCount].items.push({ img, originalIndex: index });
+    const col = columns[index % columnsCount];
+    if (col) {
+      col.items.push({ img, originalIndex: index });
+    }
   });
 
   return (

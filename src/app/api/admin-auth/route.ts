@@ -45,7 +45,8 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     pin = String(body?.pin ?? '').trim();
-  } catch {
+  } catch (err: unknown) {
+    logger.warn('Failed to parse request body in /api/admin-auth', { error: err });
     return NextResponse.json({ success: false, message: 'Invalid request body.' }, { status: 400 });
   }
 
@@ -101,7 +102,8 @@ export async function DELETE() {
   try {
     (await cookies()).delete('admin_token');
     return NextResponse.json({ success: true });
-  } catch {
+  } catch (err: unknown) {
+    logger.error('Failed to clear admin token cookie in /api/admin-auth', err);
     return NextResponse.json(
       { success: false, message: 'Failed to clear session.' },
       { status: 500 }

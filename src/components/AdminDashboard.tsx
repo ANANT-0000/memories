@@ -10,12 +10,15 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { isAllowedImage, MAX_IMAGE_SIZE_BYTES } from "@/lib/validations/image";
 
-export enum UploadStatus {
-  Pending = "pending",
-  Uploading = "uploading",
-  Done = "done",
-  Error = "error",
-}
+export const UploadStatus = {
+  Pending: "pending",
+  Optimizing: "optimizing",
+  Uploading: "uploading",
+  Done: "done",
+  Error: "error",
+} as const;
+
+export type UploadStatus = (typeof UploadStatus)[keyof typeof UploadStatus];
 
 type ImageType = {
   id: string;
@@ -27,17 +30,17 @@ type UploadItem = {
   id: string;
   name: string;
   status: UploadStatus;
-  savedPercent?: number;
-  error?: string;
+  savedPercent?: number | undefined;
+  error?: string | undefined;
 };
 
 type QueueTask = {
   id: string;
-  file?: File;
+  file?: File | undefined;
   name: string;
   status: UploadStatus;
-  savedPercent?: number;
-  error?: string;
+  savedPercent?: number | undefined;
+  error?: string | undefined;
   retries: number;
 };
 
@@ -374,7 +377,7 @@ export default function AdminDashboard({ initialImages }: { initialImages: Image
 
     const deleted = ids.filter((_, i) => {
       const r = results[i];
-      return r.status === "fulfilled" && r.value.ok;
+      return r !== undefined && r.status === "fulfilled" && r.value.ok;
     });
 
     setImages((prev) => prev.filter((img) => !deleted.includes(img.id)));

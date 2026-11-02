@@ -6,12 +6,12 @@ interface LogPayload {
   level: LogLevel;
   msg: string;
   timestamp: string;
-  context?: Record<string, unknown>;
+  context?: Record<string, unknown> | undefined;
   error?: {
     message: string;
-    stack?: string;
-    name?: string;
-  };
+    stack?: string | undefined;
+    name?: string | undefined;
+  } | undefined;
 }
 
 const SENSITIVE_KEYS = new Set([
@@ -50,10 +50,11 @@ function sanitize(value: unknown): unknown {
 
 function formatError(err: unknown) {
   if (err instanceof Error) {
+    const stack = publicEnv.NODE_ENV === 'production' ? undefined : err.stack;
     return {
       name: err.name,
       message: err.message,
-      stack: publicEnv.NODE_ENV === 'production' ? undefined : err.stack,
+      ...(stack !== undefined ? { stack } : {}),
     };
   }
   if (err && typeof err === 'object') {

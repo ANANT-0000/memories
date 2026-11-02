@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  reactStrictMode: true,
+  poweredByHeader: false,
+
   // Compress responses (gzip/brotli) — reduces API payload size
   compress: true,
 

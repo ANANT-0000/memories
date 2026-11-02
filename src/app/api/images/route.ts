@@ -118,8 +118,9 @@ export async function GET(request: Request) {
       }
 
       signedUrls?.forEach((s, i) => {
-        if (s.signedUrl) {
-          const { path, index } = needsSigning[i];
+        const item = needsSigning[i];
+        if (s.signedUrl && item) {
+          const { path, index } = item;
           setCachedUrl(path, s.signedUrl);
           resolved[index] = s.signedUrl;
         }
